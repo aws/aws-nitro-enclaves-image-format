@@ -1,11 +1,6 @@
-## My Project
+## aws-nitro-enclaves-image-format
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+This library provides the definition of the enclave image format (EIF) file.
 
 ## Security
 

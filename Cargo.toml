@@ -1,0 +1,18 @@
+[package]
+name = "eif_defs"
+version = "0.1.0"
+authors = ["The AWS Nitro Enclaves Team <aws-nitro-enclaves-devel@amazon.com>"]
+edition = "2018"
+license = "Apache-2.0"
+description = "This library provides the definition of the enclave image format (EIF) file used in AWS Nitro Enclaves."
+repository = "https://github.com/aws/aws-nitro-enclaves-image-format"
+readme = "README.md"
+keywords = ["Nitro", "Enclaves", "AWS"]
+
+[dependencies]
+sha2 = "0.9.5"
+serde = { version = ">=1.0", features = ["derive"] }
+serde_json = "1.0"
+num-traits = "0.2"
+num-derive = "0.3"
+byteorder = "1.3"
