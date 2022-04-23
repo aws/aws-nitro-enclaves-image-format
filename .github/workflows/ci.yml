@@ -12,10 +12,14 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [1.46.0, stable, nightly]
     steps:
     - uses: actions/checkout@v3
-    - run: cargo build --verbose
-    - run: cargo test --verbose
+    - run: rustup install ${{ matrix.rust }}
+    - run: cargo +${{ matrix.rust }} build --verbose
+    - run: cargo +${{ matrix.rust }} test --verbose
   clippy:
     runs-on: ubuntu-latest
     steps:
