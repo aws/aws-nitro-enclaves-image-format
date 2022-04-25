@@ -1,11 +1,11 @@
-// Copyright 2019-2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright 2019-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #![deny(warnings)]
 /// Simple utility tool for building an Eif file
-///  cargo run -- --help  should be self explanatory.
+///  cargo run --example eif_build -- --help  should be self explanatory.
 /// Example of usage:
-/// cargo run --target-dir=~/vmm-build -- --kernel bzImage \
+/// cargo run --example eif_build --target-dir=~/vmm-build -- --kernel bzImage \
 ///    --cmdline "reboot=k initrd=0x2000000,3228672 root=/dev/ram0 panic=1 pci=off nomodules \
 ///               console=ttyS0 i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd"
 ///   --ramdisk  initramfs_x86.txt_part1.cpio.gz
@@ -14,10 +14,13 @@
 ///
 use std::path::Path;
 
+use aws_nitro_enclaves_image_format::defs::EifIdentityInfo;
+use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
+use aws_nitro_enclaves_image_format::{
+    generate_build_info,
+    utils::{get_pcrs, EifBuilder, SignEnclaveInfo},
+};
 use clap::{App, Arg};
-use eif_defs::EifIdentityInfo;
-use eif_utils::identity::parse_custom_metadata;
-use eif_utils::{generate_build_info, get_pcrs, EifBuilder, SignEnclaveInfo};
 use serde_json::json;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
