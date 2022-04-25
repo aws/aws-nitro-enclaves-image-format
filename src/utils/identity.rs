@@ -1,8 +1,8 @@
 // Copyright 2019-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::defs::EifBuildInfo;
 use chrono::{DateTime, Utc};
-use eif_defs::EifBuildInfo;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -48,7 +48,7 @@ pub fn generate_build_info(
 #[macro_export]
 macro_rules! generate_build_info {
     ($kernel_config_path:expr) => {
-        $crate::identity::generate_build_info(
+        $crate::utils::identity::generate_build_info(
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
             $kernel_config_path,
