@@ -4,13 +4,13 @@
 pub mod eif_reader;
 pub mod identity;
 
-use aws_nitro_enclaves_cose::{header_map::HeaderMap, CoseSign1};
-use crc::{crc32, Hasher32};
-use eif_defs::eif_hasher::EifHasher;
-use eif_defs::{
+use crate::defs::eif_hasher::EifHasher;
+use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature, EIF_MAGIC,
     MAX_NUM_SECTIONS,
 };
+use aws_nitro_enclaves_cose::{header_map::HeaderMap, CoseSign1};
+use crc::{crc32, Hasher32};
 use openssl::asn1::Asn1Time;
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
@@ -321,7 +321,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     pub fn header(&mut self) -> EifHeader {
         EifHeader {
             magic: EIF_MAGIC,
-            version: eif_defs::CURRENT_VERSION,
+            version: crate::defs::CURRENT_VERSION,
             flags: self.eif_hdr_flags,
             default_mem: self.default_mem,
             default_cpus: self.default_cpus,

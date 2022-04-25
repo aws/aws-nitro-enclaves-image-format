@@ -1,12 +1,12 @@
 // Copyright 2019-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use aws_nitro_enclaves_cose::CoseSign1;
-use crc::{crc32, Hasher32};
-use eif_defs::eif_hasher::EifHasher;
-use eif_defs::{
+use crate::defs::eif_hasher::EifHasher;
+use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
 };
+use aws_nitro_enclaves_cose::CoseSign1;
+use crc::{crc32, Hasher32};
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
