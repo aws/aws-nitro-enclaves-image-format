@@ -5,7 +5,9 @@ use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
 };
-use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
+use aws_nitro_enclaves_cose::{
+    crypto::kms::KmsKey, crypto::Openssl, crypto::SignatureAlgorithm, CoseSign1,
+};
 use crc::{crc32, Hasher32};
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,9 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
+
+use aws_sdk_kms::{client::Client, Region};
+use tokio::runtime::Runtime;
 
 /// The information about the signing certificate to be provided for a `describe-eif` request.
 #[derive(Clone, Serialize, Deserialize)]
@@ -226,6 +231,8 @@ impl EifReader {
     pub fn get_certificate_info(
         &mut self,
         measurements: BTreeMap<String, String>,
+        region: Option<String>,
+        key_id: Option<String>,
     ) -> Result<SignCertificateInfo, String> {
         let signature_buf = match &self.signature_section {
             Some(section) => section,
@@ -266,25 +273,53 @@ impl EifReader {
         let measured_payload =
             to_vec(&pcr_info).map_err(|e| format!("Could not serialize PCR info: {:?}", e))?;
 
-        // Extract public key from certificate and convert to PKey
-        let public_key = &cert
-            .public_key()
-            .map_err(|e| format!("Failed to get public key: {:?}", e))?;
-        let coses_key = PKey::public_key_from_pem(
-            &public_key
-                .public_key_to_pem()
-                .map_err(|e| format!("Failed to serialize public key: {:?}", e))?[..],
-        )
-        .map_err(|e| format!("Failed to decode key nit elliptic key structure: {:?}", e))?;
-
         // Deserialize COSE signature and extract the payload using the public key
         let pcr_sign = CoseSign1::from_bytes(&des_sign[0].signature[..])
             .map_err(|e| format!("Failed to deserialize signature: {:?}", e))?;
-        let coses_payload = pcr_sign
-            .get_payload::<Openssl>(Some(coses_key.as_ref()))
-            .map_err(|e| format!("Failed to get signature payload: {:?}", e))?;
 
-        self.sign_check = Some(measured_payload == coses_payload);
+        match (&region, &key_id) {
+            (Some(_), Some(_)) => {
+                // Get KMS key using provided region and id
+                let mut coses_key = None;
+                let act = async {
+                    let shared_config = aws_config::from_env()
+                        .region(region.map(Region::new).unwrap())
+                        .load()
+                        .await;
+                    let client = Client::new(&shared_config);
+                    coses_key = Some(
+                        KmsKey::new(client, key_id.unwrap(), SignatureAlgorithm::ES384)
+                            .expect("Failed to get kms key"),
+                    );
+                };
+                let runtime = Runtime::new().unwrap();
+                runtime.block_on(act);
+
+                let coses_payload = pcr_sign
+                    .get_payload::<Openssl>(Some(&coses_key.unwrap()))
+                    .map_err(|e| format!("Failed to get signature payload: {:?}", e))?;
+
+                self.sign_check = Some(measured_payload == coses_payload);
+            }
+            (None, None) => {
+                // Extract public key from certificate and convert to PKey
+                let public_key = &cert
+                    .public_key()
+                    .map_err(|e| format!("Failed to get public key: {:?}", e))?;
+                let coses_key = PKey::public_key_from_pem(
+                    &public_key
+                        .public_key_to_pem()
+                        .map_err(|e| format!("Failed to serialize public key: {:?}", e))?[..],
+                )
+                .map_err(|e| format!("Failed to decode key nit elliptic key structure: {:?}", e))?;
+                let coses_payload = pcr_sign
+                    .get_payload::<Openssl>(Some(coses_key.as_ref()))
+                    .map_err(|e| format!("Failed to get signature payload: {:?}", e))?;
+
+                self.sign_check = Some(measured_payload == coses_payload);
+            }
+            _ => (),
+        }
 
         Ok(SignCertificateInfo {
             issuer_name,
