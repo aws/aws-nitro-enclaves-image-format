@@ -1,24 +1,21 @@
-use aws_sdk_kms::{Region, client::Client};
 use aws_nitro_enclaves_cose::{
-    CoseSign1, header_map::HeaderMap, 
-    crypto::kms::KmsKey, crypto::SignatureAlgorithm, crypto::Openssl
+    crypto::kms::KmsKey, crypto::Openssl, crypto::SignatureAlgorithm, header_map::HeaderMap,
+    CoseSign1,
 };
+use aws_sdk_kms::{client::Client, Region};
+use openssl::pkey::PKey;
+use sha2::{Digest, Sha384};
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use tokio::runtime::Runtime;
-use openssl::pkey::PKey;
-use sha2::{Digest, Sha384};
 
 use crate::utils::eif_reader::EifReader;
 use crate::utils::get_pcrs;
 
 use serde_cbor::to_vec;
 
-use crate::defs::{
-    EifSectionHeader,EifSectionType,PcrSignature,PcrInfo,
-    EifHeader
-};
+use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature};
 
 #[derive(Debug, PartialEq)]
 pub enum SigningMethod {
@@ -77,18 +74,20 @@ impl EifSigner {
             "KMS" => {
                 method = SigningMethod::Kms;
                 let act = async {
-                    let shared_config = aws_config::from_env().region(region.map(Region::new).unwrap()).load().await;
+                    let shared_config = aws_config::from_env()
+                        .region(region.map(Region::new).unwrap())
+                        .load()
+                        .await;
                     let client = Client::new(&shared_config);
-                    kms_key = Some(KmsKey::new(
-                        client,
-                        key_id.unwrap(),
-                        SignatureAlgorithm::ES384,
-                    ).expect("Error building kms_key"));
+                    kms_key = Some(
+                        KmsKey::new(client, key_id.unwrap(), SignatureAlgorithm::ES384)
+                            .expect("Error building kms_key"),
+                    );
                 };
                 let runtime = Runtime::new().unwrap();
                 runtime.block_on(act);
             }
-            _ => ()
+            _ => (),
         };
 
         let eif_reader = EifReader::from_eif(eif_path.clone())
@@ -102,7 +101,7 @@ impl EifSigner {
             kms_key: kms_key,
             is_signed: eif_reader.signature_section.is_some(),
         })
-    } 
+    }
 
     /// Get the pcr information that will be used as payload, from the
     /// existing enclave image file.
@@ -116,11 +115,12 @@ impl EifSigner {
             &mut eif_reader.cert_hasher,
             Sha384::new(),
             eif_reader.signature_section.is_some(),
-        ).expect("Failed to get measurements");
+        )
+        .expect("Failed to get measurements");
 
         let pcr0 = match measurements.get("PCR0") {
             Some(pcr) => pcr,
-            None => ""
+            None => "",
         };
 
         let pcr_info = PcrInfo::new(
@@ -145,7 +145,7 @@ impl EifSigner {
         let serialized_signature =
             to_vec(&eif_signature).expect("Could not serialize the signature");
         let signature_size = serialized_signature.len() as u64;
-        
+
         let eif_section = EifSectionHeader {
             section_type: EifSectionType::EifSectionSignature,
             flags: 0,
@@ -176,7 +176,7 @@ impl EifSigner {
             {
                 let section = EifSectionHeader::from_be_bytes(&section_buf)
                     .map_err(|e| format!("Error extracting EIF section header: {:?}", e))?;
-                
+
                 if section.section_type == EifSectionType::EifSectionSignature {
                     eif_content.push(serialized_signature.clone().to_vec());
                 }
@@ -221,25 +221,32 @@ impl EifSigner {
         }
 
         let mut signature = Vec::new();
-        let payload = self.get_payload()
+        let payload = self
+            .get_payload()
             .expect("Failed to get payload for image signing.");
 
         match &self.signing_method {
-            SigningMethod::PKey =>{
-                let private_key = PKey::private_key_from_pem(&mut self.private_key.as_ref().unwrap())
-                    .expect("Could not deserialize the PEM-formatted private key");
-        
-                signature = CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
-                    .unwrap()
-                    .as_bytes(false)
-                    .unwrap();        
-            },
+            SigningMethod::PKey => {
+                let private_key =
+                    PKey::private_key_from_pem(&mut self.private_key.as_ref().unwrap())
+                        .expect("Could not deserialize the PEM-formatted private key");
+
+                signature =
+                    CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
+                        .unwrap()
+                        .as_bytes(false)
+                        .unwrap();
+            }
             SigningMethod::Kms => {
-                signature = CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), self.kms_key.as_ref().unwrap())
-                    .unwrap()
-                    .as_bytes(false)
-                    .unwrap();
-            },
+                signature = CoseSign1::new::<Openssl>(
+                    &payload,
+                    &HeaderMap::new(),
+                    self.kms_key.as_ref().unwrap(),
+                )
+                .unwrap()
+                .as_bytes(false)
+                .unwrap();
+            }
             _ => (),
         }
 

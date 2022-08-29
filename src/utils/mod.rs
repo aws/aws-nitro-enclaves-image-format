@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![deny(warnings)]
 pub mod eif_reader;
+pub mod eif_signer;
 pub mod identity;
 
 use crate::defs::eif_hasher::EifHasher;
@@ -9,7 +10,11 @@ use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature, EIF_MAGIC,
     MAX_NUM_SECTIONS,
 };
-use aws_nitro_enclaves_cose::{crypto::Openssl, header_map::HeaderMap, CoseSign1};
+use aws_nitro_enclaves_cose::{
+    crypto::kms::KmsKey, crypto::Openssl, crypto::SignatureAlgorithm, header_map::HeaderMap,
+    CoseSign1,
+};
+use aws_sdk_kms::{client::Client, Region};
 use crc::{crc32, Hasher32};
 use openssl::asn1::Asn1Time;
 use openssl::pkey::PKey;
@@ -34,6 +39,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
 use std::path::Path;
+use tokio::runtime::Runtime;
 
 const DEFAULT_SECTIONS_COUNT: u16 = 3;
 
@@ -643,6 +649,7 @@ impl PcrSignatureChecker {
     /// Reads EIF section headers and looks for a signature.
     /// Seek to the signature section, if present, and save the certificate and signature
     pub fn from_eif(eif_path: &str) -> Result<Self, String> {
+        println!("created checker!");
         let mut signing_certificate = Vec::new();
         let mut signature = Vec::new();
 
@@ -703,19 +710,52 @@ impl PcrSignatureChecker {
     }
 
     /// Verifies the validity of the signing certificate
-    pub fn verify(&mut self) -> Result<(), String> {
+    pub fn verify(
+        &mut self,
+        region: Option<&String>,
+        key_id: Option<&String>,
+    ) -> Result<(), String> {
         let signature = CoseSign1::from_bytes(&self.signature[..])
             .map_err(|err| format!("Could not deserialize the signature: {:?}", err))?;
         let cert = openssl::x509::X509::from_pem(&self.signing_certificate[..])
             .map_err(|_| "Could not deserialize the signing certificate".to_string())?;
-        let public_key = cert
-            .public_key()
-            .map_err(|_| "Could not get the public key from the signing certificate".to_string())?;
+        let result;
 
-        // Verify the signature
-        let result = signature
-            .verify_signature::<Openssl>(public_key.as_ref())
-            .map_err(|err| format!("Could not verify EIF signature: {:?}", err))?;
+        if region.is_some() && key_id.is_some() {
+            let mut kms_key = None;
+            let act = async {
+                let shared_config = aws_config::from_env()
+                    .region(Region::new(region.unwrap().to_string()))
+                    .load()
+                    .await;
+                let client = Client::new(&shared_config);
+                kms_key = Some(
+                    KmsKey::new(
+                        client,
+                        key_id.unwrap().to_string(),
+                        SignatureAlgorithm::ES384,
+                    )
+                    .expect("Failed to get kms key"),
+                );
+            };
+            let runtime = Runtime::new().unwrap();
+            runtime.block_on(act);
+
+            // Verify the signature
+            result = signature
+                .verify_signature::<Openssl>(&kms_key.unwrap())
+                .map_err(|err| format!("Could not verify EIF signature: {:?}", err))?;
+        } else {
+            let public_key = cert.public_key().map_err(|_| {
+                "Could not get the public key from the signing certificate".to_string()
+            })?;
+
+            // Verify the signature
+            result = signature
+                .verify_signature::<Openssl>(public_key.as_ref())
+                .map_err(|err| format!("Could not verify EIF signature: {:?}", err))?;
+        }
+
         if !result {
             return Err("The EIF signature is not valid".to_string());
         }
