@@ -17,25 +17,25 @@ use serde_cbor::to_vec;
 
 use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature};
 
-#[derive(Debug, PartialEq)]
 pub enum SigningMethod {
-    PKey,
-    Kms,
-    NoSign,
+    PrivateKey(Vec<u8>),
+    Kms(KmsKey),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum SigningKey {
+    LocalKey { path: String },
+    KmsKey { key_id: String, region: String },
 }
 
 /// Used for signing enclave image file
 pub struct EifSigner {
     /// EIF file path.
     pub eif_path: String,
-    /// Method used to sign the enclave image. (PrivateKey or KMS)
-    pub signing_method: SigningMethod,
     /// Certificate file path
     pub signing_certificate: Vec<u8>,
     /// Private key
-    pub private_key: Option<Vec<u8>>,
-    /// KMS key
-    pub kms_key: Option<KmsKey>,
+    pub signing_key: SigningMethod,
     /// Is signed
     pub is_signed: bool,
 }
@@ -43,15 +43,11 @@ pub struct EifSigner {
 impl EifSigner {
     pub fn new(
         eif_path: String,
-        signing_method: String,
         cert_path: String,
-        key_path: Option<String>,
-        region: Option<String>,
-        key_id: Option<String>,
+        signing_key_args: SigningKey,
     ) -> Result<Self, String> {
-        let mut method = SigningMethod::NoSign;
         let mut private_key = Vec::new();
-        let mut kms_key = None;
+        let mut signing_key = None;
 
         let mut certificate_file = File::open(cert_path)
             .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
@@ -60,34 +56,31 @@ impl EifSigner {
             .read_to_end(&mut signing_certificate)
             .map_err(|err| format!("Could not read the certificate file: {:?}", err))?;
 
-        match signing_method.as_str() {
-            "PrivateKey" => {
-                method = SigningMethod::PKey;
-                let key_path = key_path.as_ref().map(String::as_str).unwrap();
+        match signing_key_args {
+            SigningKey::LocalKey { path } => {
+                let key_path = &path;
 
                 let mut key_file = File::open(key_path)
                     .map_err(|err| format!("Could not open the key file: {:?}", err))?;
                 key_file
                     .read_to_end(&mut private_key)
                     .map_err(|err| format!("Could not read the key file: {:?}", err))?;
+                signing_key = Some(SigningMethod::PrivateKey(private_key));
             }
-            "KMS" => {
-                method = SigningMethod::Kms;
+            SigningKey::KmsKey { key_id, region } => {
                 let act = async {
                     let shared_config = aws_config::from_env()
-                        .region(region.map(Region::new).unwrap())
+                        .region(Region::new(region))
                         .load()
                         .await;
                     let client = Client::new(&shared_config);
-                    kms_key = Some(
-                        KmsKey::new(client, key_id.unwrap(), SignatureAlgorithm::ES384)
-                            .expect("Error building kms_key"),
-                    );
+                    let kms_key = KmsKey::new(client, key_id, SignatureAlgorithm::ES384)
+                        .expect("Error building kms_key");
+                    signing_key = Some(SigningMethod::Kms(kms_key));
                 };
                 let runtime = Runtime::new().unwrap();
                 runtime.block_on(act);
             }
-            _ => (),
         };
 
         let eif_reader = EifReader::from_eif(eif_path.clone())
@@ -95,10 +88,8 @@ impl EifSigner {
 
         Ok(EifSigner {
             eif_path: eif_path,
-            signing_method: method,
             signing_certificate: signing_certificate,
-            private_key: Some(private_key),
-            kms_key: kms_key,
+            signing_key: signing_key.unwrap(),
             is_signed: eif_reader.signature_section.is_some(),
         })
     }
@@ -216,20 +207,15 @@ impl EifSigner {
 
     /// Generates the signature based on the selected method and writes it to the EIF
     pub fn sign_image(&mut self) -> Result<(), String> {
-        if self.signing_method == SigningMethod::NoSign {
-            return Ok(());
-        }
-
-        let mut signature = Vec::new();
+        let signature;
         let payload = self
             .get_payload()
             .expect("Failed to get payload for image signing.");
 
-        match &self.signing_method {
-            SigningMethod::PKey => {
-                let private_key =
-                    PKey::private_key_from_pem(&mut self.private_key.as_ref().unwrap())
-                        .expect("Could not deserialize the PEM-formatted private key");
+        match &self.signing_key {
+            SigningMethod::PrivateKey(signing_key) => {
+                let private_key = PKey::private_key_from_pem(&mut signing_key.as_ref())
+                    .expect("Could not deserialize the PEM-formatted private key");
 
                 signature =
                     CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
@@ -237,17 +223,12 @@ impl EifSigner {
                         .as_bytes(false)
                         .unwrap();
             }
-            SigningMethod::Kms => {
-                signature = CoseSign1::new::<Openssl>(
-                    &payload,
-                    &HeaderMap::new(),
-                    self.kms_key.as_ref().unwrap(),
-                )
-                .unwrap()
-                .as_bytes(false)
-                .unwrap();
+            SigningMethod::Kms(signing_key) => {
+                signature = CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), signing_key)
+                    .unwrap()
+                    .as_bytes(false)
+                    .unwrap();
             }
-            _ => (),
         }
 
         let pcr_signature = PcrSignature {
