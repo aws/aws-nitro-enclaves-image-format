@@ -161,7 +161,7 @@ impl EifHeader {
     }
 }
 
-#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq)]
+#[derive(Clone, Copy, Debug, FromPrimitive, PartialEq, Eq)]
 #[repr(u16)]
 pub enum EifSectionType {
     EifSectionInvalid,
