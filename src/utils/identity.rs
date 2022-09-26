@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::defs::EifBuildInfo;
-use chrono::{DateTime, Utc};
+use chrono::offset::Utc;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::time::SystemTime;
 
 /// Utilities and helpers to fill EIF identity information
 
@@ -19,8 +18,7 @@ pub fn generate_build_info(
     build_tool_version: &str,
     img_config_path: &str,
 ) -> Result<EifBuildInfo, String> {
-    let now = SystemTime::now();
-    let now: DateTime<Utc> = now.into();
+    let now = Utc::now();
 
     let config_file = File::open(img_config_path)
         .map_err(|e| format!("Failed to open kernel image config file: {}", e))?;
