@@ -502,7 +502,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     }
 
     pub fn write_ramdisks(&mut self, eif_file: &mut File) {
-        for (index, mut ramdisk) in (&self.ramdisks).iter().enumerate() {
+        for (index, mut ramdisk) in self.ramdisks.iter().enumerate() {
             let eif_section = EifSectionHeader {
                 section_type: EifSectionType::EifSectionRamdisk,
                 flags: 0,
@@ -594,7 +594,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         self.image_hasher.write_all(&self.cmdline[..]).unwrap();
         self.bootstrap_hasher.write_all(&self.cmdline[..]).unwrap();
 
-        for (index, mut ramdisk) in (&self.ramdisks).iter().enumerate() {
+        for (index, mut ramdisk) in self.ramdisks.iter().enumerate() {
             ramdisk
                 .seek(SeekFrom::Start(0))
                 .expect("Could not seek kernel to beginning");

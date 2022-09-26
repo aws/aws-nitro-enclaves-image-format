@@ -286,7 +286,7 @@ impl EifReader {
 
         self.sign_check = Some(measured_payload == coses_payload);
 
-        return Ok(SignCertificateInfo {
+        Ok(SignCertificateInfo {
             issuer_name,
             algorithm,
             not_before: format!("{:#?}", cert.not_before()),
@@ -295,6 +295,6 @@ impl EifReader {
             signature: format!("{:02X?}", cert.signature().as_slice().to_vec())
                 .replace(&vec!['[', ']'][..], "")
                 .replace(", ", ":"),
-        });
+        })
     }
 }
