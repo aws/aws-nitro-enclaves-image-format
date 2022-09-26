@@ -17,6 +17,7 @@ use serde_cbor::to_vec;
 
 use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature};
 
+#[derive(Clone, Debug)]
 pub enum SigningMethod {
     PrivateKey(Vec<u8>),
     Kms(KmsKey),
@@ -25,7 +26,7 @@ pub enum SigningMethod {
 #[derive(Debug, PartialEq, Clone)]
 pub enum SigningKey {
     LocalKey { path: String },
-    KmsKey { key_id: String, region: String },
+    KmsKey { arn: String, region: String },
 }
 
 /// Used for signing enclave image file
@@ -67,14 +68,14 @@ impl EifSigner {
                     .map_err(|err| format!("Could not read the key file: {:?}", err))?;
                 signing_key = Some(SigningMethod::PrivateKey(private_key));
             }
-            SigningKey::KmsKey { key_id, region } => {
+            SigningKey::KmsKey { arn, region } => {
                 let act = async {
                     let shared_config = aws_config::from_env()
                         .region(Region::new(region))
                         .load()
                         .await;
                     let client = Client::new(&shared_config);
-                    let kms_key = KmsKey::new(client, key_id, SignatureAlgorithm::ES384)
+                    let kms_key = KmsKey::new(client, arn, SignatureAlgorithm::ES384)
                         .expect("Error building kms_key");
                     signing_key = Some(SigningMethod::Kms(kms_key));
                 };

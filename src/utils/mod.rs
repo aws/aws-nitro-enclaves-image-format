@@ -10,6 +10,8 @@ use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature, EIF_MAGIC,
     MAX_NUM_SECTIONS,
 };
+use crate::utils::eif_signer::SigningKey;
+use crate::utils::eif_signer::SigningMethod;
 use aws_nitro_enclaves_cose::{
     crypto::kms::KmsKey, crypto::Openssl, crypto::SignatureAlgorithm, header_map::HeaderMap,
     CoseSign1,
@@ -46,11 +48,11 @@ const DEFAULT_SECTIONS_COUNT: u16 = 3;
 #[derive(Clone, Debug)]
 pub struct SignEnclaveInfo {
     pub signing_certificate: Vec<u8>,
-    pub private_key: Vec<u8>,
+    pub signing_key: SigningMethod,
 }
 
 impl SignEnclaveInfo {
-    pub fn new(cert_path: &str, key_path: &str) -> Result<Self, String> {
+    pub fn new(cert_path: &str, signing_key_arg: &SigningKey) -> Result<Self, String> {
         let mut certificate_file = File::open(cert_path)
             .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
         let mut signing_certificate = Vec::new();
@@ -58,16 +60,38 @@ impl SignEnclaveInfo {
             .read_to_end(&mut signing_certificate)
             .map_err(|err| format!("Could not read the certificate file: {:?}", err))?;
 
-        let mut key_file = File::open(key_path)
-            .map_err(|err| format!("Could not open the key file: {:?}", err))?;
-        let mut private_key = Vec::new();
-        key_file
-            .read_to_end(&mut private_key)
-            .map_err(|err| format!("Could not read the key file: {:?}", err))?;
+        let mut signing_key = None;
 
+        match signing_key_arg.clone() {
+            SigningKey::LocalKey { path } => {
+                let key_path = &path;
+                let mut private_key = Vec::new();
+
+                let mut key_file = File::open(key_path)
+                    .map_err(|err| format!("Could not open the key file: {:?}", err))?;
+                key_file
+                    .read_to_end(&mut private_key)
+                    .map_err(|err| format!("Could not read the key file: {:?}", err))?;
+                signing_key = Some(SigningMethod::PrivateKey(private_key));
+            }
+            SigningKey::KmsKey { arn, region } => {
+                let act = async {
+                    let shared_config = aws_config::from_env()
+                        .region(Region::new(region))
+                        .load()
+                        .await;
+                    let client = Client::new(&shared_config);
+                    let kms_key = KmsKey::new(client, arn.to_string(), SignatureAlgorithm::ES384)
+                        .expect("Error building kms_key");
+                    signing_key = Some(SigningMethod::Kms(kms_key));
+                };
+                let runtime = Runtime::new().unwrap();
+                runtime.block_on(act);
+            }
+        };
         Ok(SignEnclaveInfo {
             signing_certificate,
-            private_key,
+            signing_key: signing_key.unwrap(),
         })
     }
 }
@@ -296,14 +320,26 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         let pcr_info = PcrInfo::new(register_index, register_value);
 
         let payload = to_vec(&pcr_info).expect("Could not serialize PCR info");
-        let private_key = PKey::private_key_from_pem(&sign_info.private_key)
-            .expect("Could not deserialize the PEM-formatted private key");
+        let signature;
 
-        let signature =
-            CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
-                .unwrap()
-                .as_bytes(false)
-                .unwrap();
+        match &self.sign_info.as_ref().unwrap().signing_key {
+            SigningMethod::PrivateKey(signing_key) => {
+                let private_key = PKey::private_key_from_pem(&mut signing_key.as_ref())
+                    .expect("Could not deserialize the PEM-formatted private key");
+
+                signature =
+                    CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
+                        .unwrap()
+                        .as_bytes(false)
+                        .unwrap();
+            }
+            SigningMethod::Kms(signing_key) => {
+                signature = CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), signing_key)
+                    .unwrap()
+                    .as_bytes(false)
+                    .unwrap();
+            }
+        }
 
         PcrSignature {
             signing_certificate,
