@@ -23,4 +23,4 @@ crc = "1.8"
 aws-nitro-enclaves-cose = "0.4"
 openssl = "0.10"
 serde_cbor = "0.11"
-chrono = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"]}
