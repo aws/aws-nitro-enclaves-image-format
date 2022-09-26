@@ -1,5 +1,10 @@
 ## aws-nitro-enclaves-image-format
 
+![msrv]
+
+[msrv]: https://img.shields.io/badge/MSRV-1.58.1-blue
+
+
 This library provides the definition of the enclave image format (EIF) file.
 
 ## Security
