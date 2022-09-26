@@ -5,7 +5,7 @@ use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
 };
-use aws_nitro_enclaves_cose::CoseSign1;
+use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{crc32, Hasher32};
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
@@ -281,7 +281,7 @@ impl EifReader {
         let pcr_sign = CoseSign1::from_bytes(&des_sign[0].signature[..])
             .map_err(|e| format!("Failed to deserialize signature: {:?}", e))?;
         let coses_payload = pcr_sign
-            .get_payload(Some(coses_key.as_ref()))
+            .get_payload::<Openssl>(Some(coses_key.as_ref()))
             .map_err(|e| format!("Failed to get signature payload: {:?}", e))?;
 
         self.sign_check = Some(measured_payload == coses_payload);

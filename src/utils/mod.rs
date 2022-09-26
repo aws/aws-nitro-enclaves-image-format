@@ -9,7 +9,7 @@ use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature, EIF_MAGIC,
     MAX_NUM_SECTIONS,
 };
-use aws_nitro_enclaves_cose::{header_map::HeaderMap, CoseSign1};
+use aws_nitro_enclaves_cose::{crypto::Openssl, header_map::HeaderMap, CoseSign1};
 use crc::{crc32, Hasher32};
 use openssl::asn1::Asn1Time;
 use openssl::pkey::PKey;
@@ -293,10 +293,11 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         let private_key = PKey::private_key_from_pem(&sign_info.private_key)
             .expect("Could not deserialize the PEM-formatted private key");
 
-        let signature = CoseSign1::new(&payload, &HeaderMap::new(), private_key.as_ref())
-            .unwrap()
-            .as_bytes(false)
-            .unwrap();
+        let signature =
+            CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
+                .unwrap()
+                .as_bytes(false)
+                .unwrap();
 
         PcrSignature {
             signing_certificate,
@@ -713,7 +714,7 @@ impl PcrSignatureChecker {
 
         // Verify the signature
         let result = signature
-            .verify_signature(public_key.as_ref())
+            .verify_signature::<Openssl>(public_key.as_ref())
             .map_err(|err| format!("Could not verify EIF signature: {:?}", err))?;
         if !result {
             return Err("The EIF signature is not valid".to_string());
