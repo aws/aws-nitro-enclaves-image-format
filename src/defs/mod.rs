@@ -11,6 +11,7 @@
 /// With that in mind please be frugal with the dependencies for this
 /// crate.
 use byteorder::{BigEndian, ByteOrder};
+use bytes::{Buf, BufMut};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
@@ -57,46 +58,33 @@ pub struct EifHeader {
 }
 
 impl EifHeader {
-    pub fn from_be_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let mut pos = 0;
+    pub fn from_be_bytes(mut bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != Self::size() {
+            return Err("Invalid EifHeader length".to_string());
+        }
 
         let mut magic = [0u8; 4];
-        magic.copy_from_slice(&bytes[pos..pos + size_of::<[u8; 4]>()]);
-        pos += size_of::<[u8; 4]>();
+        bytes.copy_to_slice(&mut magic);
 
-        let version = BigEndian::read_u16(&bytes[pos..]);
-        pos += size_of::<u16>();
-        let flags = BigEndian::read_u16(&bytes[pos..]);
-        pos += size_of::<u16>();
-        let default_mem = BigEndian::read_u64(&bytes[pos..]);
-        pos += size_of::<u64>();
-        let default_cpus = BigEndian::read_u64(&bytes[pos..]);
-        pos += size_of::<u64>();
-        let reserved = BigEndian::read_u16(&bytes[pos..]);
-        pos += size_of::<u16>();
-        let num_sections = BigEndian::read_u16(&bytes[pos..]);
-        pos += size_of::<u16>();
+        let version = bytes.get_u16();
+        let flags = bytes.get_u16();
+        let default_mem = bytes.get_u64();
+        let default_cpus = bytes.get_u64();
+        let reserved = bytes.get_u16();
+        let num_sections = bytes.get_u16();
 
         let mut section_offsets = [0u64; MAX_NUM_SECTIONS];
         for item in section_offsets.iter_mut() {
-            *item = BigEndian::read_u64(&bytes[pos..]);
-            pos += size_of::<u64>();
+            *item = bytes.get_u64();
         }
 
         let mut section_sizes = [0u64; MAX_NUM_SECTIONS];
         for item in section_sizes.iter_mut() {
-            *item = BigEndian::read_u64(&bytes[pos..]);
-            pos += size_of::<u64>();
+            *item = bytes.get_u64();
         }
 
-        let unused = BigEndian::read_u32(&bytes[pos..]);
-        pos += size_of::<u32>();
-        let eif_crc32 = BigEndian::read_u32(&bytes[pos..]);
-        pos += size_of::<u32>();
-
-        if bytes.len() != pos {
-            return Err("Invalid EifHeader length".to_string());
-        }
+        let unused = bytes.get_u32();
+        let eif_crc32 = bytes.get_u32();
 
         Ok(EifHeader {
             magic,
@@ -114,41 +102,27 @@ impl EifHeader {
     }
 
     pub fn to_be_bytes(&self) -> Vec<u8> {
-        let mut buf = [0u8; Self::size()];
-        let mut result = Vec::new();
-        let mut pos = 0;
+        let mut result = Vec::with_capacity(Self::size());
 
-        buf[pos..pos + size_of::<[u8; 4]>()].copy_from_slice(&self.magic);
-        pos += size_of::<[u8; 4]>();
-
-        BigEndian::write_u16(&mut buf[pos..], self.version);
-        pos += size_of::<u16>();
-        BigEndian::write_u16(&mut buf[pos..], self.flags);
-        pos += size_of::<u16>();
-        BigEndian::write_u64(&mut buf[pos..], self.default_mem);
-        pos += size_of::<u64>();
-        BigEndian::write_u64(&mut buf[pos..], self.default_cpus);
-        pos += size_of::<u64>();
-        BigEndian::write_u16(&mut buf[pos..], self.reserved);
-        pos += size_of::<u16>();
-        BigEndian::write_u16(&mut buf[pos..], self.num_sections);
-        pos += size_of::<u16>();
+        result.put_slice(&self.magic);
+        result.put_u16(self.version);
+        result.put_u16(self.flags);
+        result.put_u64(self.default_mem);
+        result.put_u64(self.default_cpus);
+        result.put_u16(self.reserved);
+        result.put_u16(self.num_sections);
 
         for elem in self.section_offsets.iter() {
-            BigEndian::write_u64(&mut buf[pos..], *elem);
-            pos += size_of::<u64>();
+            result.put_u64(*elem);
         }
 
         for elem in self.section_sizes.iter() {
-            BigEndian::write_u64(&mut buf[pos..], *elem);
-            pos += size_of::<u64>();
+            result.put_u64(*elem);
         }
 
-        BigEndian::write_u32(&mut buf[pos..], self.unused);
-        pos += size_of::<u32>();
-        BigEndian::write_u32(&mut buf[pos..], self.eif_crc32);
+        result.put_u32(self.unused);
+        result.put_u32(self.eif_crc32);
 
-        result.extend_from_slice(&buf[..]);
         result
     }
 
