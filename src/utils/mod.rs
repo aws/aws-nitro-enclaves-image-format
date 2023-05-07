@@ -232,7 +232,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     }
 
     fn kernel_size(&self) -> u64 {
-        self.kernel.metadata().unwrap().len() as u64
+        self.kernel.metadata().unwrap().len()
     }
 
     fn cmdline_offset(&self) -> u64 {
@@ -257,7 +257,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     }
 
     fn ramdisk_size(&self, ramdisk: &File) -> u64 {
-        ramdisk.metadata().unwrap().len() as u64
+        ramdisk.metadata().unwrap().len()
     }
 
     fn signature_offset(&self) -> u64 {
