@@ -13,7 +13,7 @@ use crate::defs::{
 use crate::utils::eif_signer::SigningKey;
 use crate::utils::eif_signer::SigningMethod;
 use aws_nitro_enclaves_cose::{
-    crypto::kms::KmsKey, crypto::Openssl, crypto::SignatureAlgorithm, header_map::HeaderMap,
+    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap,
     CoseSign1,
 };
 use aws_sdk_kms::{client::Client, Region};
@@ -80,9 +80,11 @@ impl SignEnclaveInfo {
                         .region(Region::new(region))
                         .load()
                         .await;
-                    let client = Client::new(&shared_config);
-                    let kms_key = KmsKey::new(client, arn.to_string(), SignatureAlgorithm::ES384)
-                        .expect("Error building kms_key");
+                    let kms_key = tokio::task::spawn_blocking(move || {
+                        let client = Client::new(&shared_config);
+                        KmsKey::new_with_public_key(client, arn, None)
+                            .expect("Error building kms_key")
+                    }).await.unwrap();
                     signing_key = Some(SigningMethod::Kms(kms_key));
                 };
                 let runtime = Runtime::new().unwrap();
@@ -320,31 +322,45 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         let pcr_info = PcrInfo::new(register_index, register_value);
 
         let payload = to_vec(&pcr_info).expect("Could not serialize PCR info");
-        let signature;
 
-        match &self.sign_info.as_ref().unwrap().signing_key {
+        let pcr_signature = match &self.sign_info.as_ref().unwrap().signing_key {
             SigningMethod::PrivateKey(signing_key) => {
-                let private_key = PKey::private_key_from_pem(&mut signing_key.as_ref())
+                let private_key = PKey::private_key_from_pem(signing_key.as_ref())
                     .expect("Could not deserialize the PEM-formatted private key");
 
-                signature =
+                let signature =
                     CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
                         .unwrap()
                         .as_bytes(false)
                         .unwrap();
+                PcrSignature {
+                    signing_certificate,
+                    signature,
+                }
             }
             SigningMethod::Kms(signing_key) => {
-                signature = CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), signing_key)
-                    .unwrap()
-                    .as_bytes(false)
-                    .unwrap();
+                let payload_clone = payload;
+                let signing_key_clone = signing_key.clone();
+                let act = async move {
+                    tokio::task::spawn_blocking(move || {
+                        let signing_key = signing_key_clone;
+                        CoseSign1::new::<Openssl>(&payload_clone, &HeaderMap::new(), &signing_key)
+                            .unwrap()
+                            .as_bytes(false)
+                            .unwrap()
+                    }).await  
+                };
+        
+                let runtime = Runtime::new().unwrap();
+                let signature = runtime.block_on(act).unwrap();
+                PcrSignature {
+                    signing_certificate,
+                    signature,
+                }
             }
-        }
+        };
 
-        PcrSignature {
-            signing_certificate,
-            signature,
-        }
+        pcr_signature
     }
 
     /// Generate the signature of the EIF.
@@ -747,50 +763,21 @@ impl PcrSignatureChecker {
 
     /// Verifies the validity of the signing certificate
     pub fn verify(
-        &mut self,
-        region: Option<&String>,
-        key_id: Option<&String>,
+        &mut self
     ) -> Result<(), String> {
         let signature = CoseSign1::from_bytes(&self.signature[..])
             .map_err(|err| format!("Could not deserialize the signature: {:?}", err))?;
         let cert = openssl::x509::X509::from_pem(&self.signing_certificate[..])
             .map_err(|_| "Could not deserialize the signing certificate".to_string())?;
-        let result;
 
-        if region.is_some() && key_id.is_some() {
-            let mut kms_key = None;
-            let act = async {
-                let shared_config = aws_config::from_env()
-                    .region(Region::new(region.unwrap().to_string()))
-                    .load()
-                    .await;
-                let client = Client::new(&shared_config);
-                kms_key = Some(
-                    KmsKey::new(
-                        client,
-                        key_id.unwrap().to_string(),
-                        SignatureAlgorithm::ES384,
-                    )
-                    .expect("Failed to get kms key"),
-                );
-            };
-            let runtime = Runtime::new().unwrap();
-            runtime.block_on(act);
+        let public_key = cert.public_key().map_err(|_| {
+            "Could not get the public key from the signing certificate".to_string()
+        })?;
 
-            // Verify the signature
-            result = signature
-                .verify_signature::<Openssl>(&kms_key.unwrap())
-                .map_err(|err| format!("Could not verify EIF signature: {:?}", err))?;
-        } else {
-            let public_key = cert.public_key().map_err(|_| {
-                "Could not get the public key from the signing certificate".to_string()
-            })?;
-
-            // Verify the signature
-            result = signature
-                .verify_signature::<Openssl>(public_key.as_ref())
-                .map_err(|err| format!("Could not verify EIF signature: {:?}", err))?;
-        }
+        // Verify the signature
+        let result = signature
+            .verify_signature::<Openssl>(public_key.as_ref())
+            .map_err(|err| format!("Could not verify EIF signature: {:?}", err))?;
 
         if !result {
             return Err("The EIF signature is not valid".to_string());
