@@ -18,7 +18,7 @@ use aws_nitro_enclaves_image_format::defs::EifIdentityInfo;
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
-    utils::{get_pcrs, EifBuilder, SignEnclaveInfo},
+    utils::{get_pcrs, EifBuilder, SignEnclaveInfo, eif_signer::SigningKey},
 };
 use clap::{App, Arg};
 use serde_json::json;
@@ -82,6 +82,18 @@ fn main() {
             Arg::with_name("private-key")
                 .long("private-key")
                 .help("Specify the path to the private-key")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("kms-key-arn")
+                .long("kms-key-arn")
+                .help("Specify ARN of the KMS key")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("kms-key-region")
+                .long("kms-key-region")
+                .help("Specify region in which the KMS key resides")
                 .takes_value(true),
         )
         .arg(
@@ -150,12 +162,29 @@ fn main() {
 
     let private_key = matches.value_of("private-key");
 
-    let sign_info = match (signing_certificate, private_key) {
+    let kms_key_arn = matches.value_of("kms-key-arn");
+    let kms_key_region = matches.value_of("kms-key-region");
+
+    let sign_info = match (kms_key_arn, private_key) {
         (None, None) => None,
-        (Some(cert_path), Some(key_path)) => {
-            Some(SignEnclaveInfo::new(cert_path, key_path).expect("Could not read signing info"))
-        }
-        _ => panic!("Both signing-certificate and private-key parameters must be provided"),
+        (None, Some(key_path)) => {
+            if signing_certificate.is_none() {
+                panic!("Both signing-certificate and private-key parameters must be provided")
+            }
+            Some(SignEnclaveInfo::new(signing_certificate.unwrap(), &SigningKey::LocalKey{
+                path: key_path.to_string()
+            }).expect("Could not read signing info"))
+        },
+        (Some(kms_arn), None) => {
+            if signing_certificate.is_none() {
+                panic!("Both signing-certificate and kms-key-arn parameters must be provided")
+            }
+            Some(SignEnclaveInfo::new(signing_certificate.unwrap(), &SigningKey::KmsKey{
+                arn: kms_arn.to_string(),
+                region: kms_key_region.unwrap().to_string()
+            }).expect("Could not read signing info"))
+        },
+        (Some(_), Some(_)) => panic!("Both signing-certificate and private-key parameters must be provided"),
     };
 
     let img_name = matches.value_of("image_name").map(|val| val.to_string());
