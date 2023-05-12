@@ -13,8 +13,7 @@ use crate::defs::{
 use crate::utils::eif_signer::SigningKey;
 use crate::utils::eif_signer::SigningMethod;
 use aws_nitro_enclaves_cose::{
-    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap,
-    CoseSign1,
+    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap, CoseSign1,
 };
 use aws_sdk_kms::{client::Client, Region};
 use crc::{crc32, Hasher32};
@@ -84,7 +83,9 @@ impl SignEnclaveInfo {
                         let client = Client::new(&shared_config);
                         KmsKey::new_with_public_key(client, arn, None)
                             .expect("Error building kms_key")
-                    }).await.unwrap();
+                    })
+                    .await
+                    .unwrap();
                     signing_key = Some(SigningMethod::Kms(kms_key));
                 };
                 let runtime = Runtime::new().unwrap();
@@ -348,9 +349,10 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
                             .unwrap()
                             .as_bytes(false)
                             .unwrap()
-                    }).await  
+                    })
+                    .await
                 };
-        
+
                 let runtime = Runtime::new().unwrap();
                 let signature = runtime.block_on(act).unwrap();
                 PcrSignature {
@@ -762,17 +764,15 @@ impl PcrSignatureChecker {
     }
 
     /// Verifies the validity of the signing certificate
-    pub fn verify(
-        &mut self
-    ) -> Result<(), String> {
+    pub fn verify(&mut self) -> Result<(), String> {
         let signature = CoseSign1::from_bytes(&self.signature[..])
             .map_err(|err| format!("Could not deserialize the signature: {:?}", err))?;
         let cert = openssl::x509::X509::from_pem(&self.signing_certificate[..])
             .map_err(|_| "Could not deserialize the signing certificate".to_string())?;
 
-        let public_key = cert.public_key().map_err(|_| {
-            "Could not get the public key from the signing certificate".to_string()
-        })?;
+        let public_key = cert
+            .public_key()
+            .map_err(|_| "Could not get the public key from the signing certificate".to_string())?;
 
         // Verify the signature
         let result = signature

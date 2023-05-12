@@ -5,9 +5,7 @@ use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
 };
-use aws_nitro_enclaves_cose::{
-    crypto::Openssl, CoseSign1,
-};
+use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{crc32, Hasher32};
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};

@@ -18,7 +18,7 @@ use aws_nitro_enclaves_image_format::defs::EifIdentityInfo;
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
-    utils::{get_pcrs, EifBuilder, SignEnclaveInfo, eif_signer::SigningKey},
+    utils::{eif_signer::SigningKey, get_pcrs, EifBuilder, SignEnclaveInfo},
 };
 use clap::{App, Arg};
 use serde_json::json;
@@ -171,20 +171,34 @@ fn main() {
             if signing_certificate.is_none() {
                 panic!("Both signing-certificate and private-key parameters must be provided")
             }
-            Some(SignEnclaveInfo::new(signing_certificate.unwrap(), &SigningKey::LocalKey{
-                path: key_path.to_string()
-            }).expect("Could not read signing info"))
-        },
+            Some(
+                SignEnclaveInfo::new(
+                    signing_certificate.unwrap(),
+                    &SigningKey::LocalKey {
+                        path: key_path.to_string(),
+                    },
+                )
+                .expect("Could not read signing info"),
+            )
+        }
         (Some(kms_arn), None) => {
             if signing_certificate.is_none() {
                 panic!("Both signing-certificate and kms-key-arn parameters must be provided")
             }
-            Some(SignEnclaveInfo::new(signing_certificate.unwrap(), &SigningKey::KmsKey{
-                arn: kms_arn.to_string(),
-                region: kms_key_region.unwrap().to_string()
-            }).expect("Could not read signing info"))
-        },
-        (Some(_), Some(_)) => panic!("Both signing-certificate and private-key parameters must be provided"),
+            Some(
+                SignEnclaveInfo::new(
+                    signing_certificate.unwrap(),
+                    &SigningKey::KmsKey {
+                        arn: kms_arn.to_string(),
+                        region: kms_key_region.unwrap().to_string(),
+                    },
+                )
+                .expect("Could not read signing info"),
+            )
+        }
+        (Some(_), Some(_)) => {
+            panic!("Both signing-certificate and private-key parameters must be provided")
+        }
     };
 
     let img_name = matches.value_of("image_name").map(|val| val.to_string());

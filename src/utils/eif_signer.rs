@@ -1,6 +1,5 @@
 use aws_nitro_enclaves_cose::{
-    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap,
-    CoseSign1,
+    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap, CoseSign1,
 };
 use aws_sdk_kms::{client::Client, Region};
 use openssl::pkey::PKey;
@@ -80,7 +79,9 @@ impl EifSigner {
                         let client = Client::new(&shared_config);
                         KmsKey::new_with_public_key(client, arn, None)
                             .expect("Error building kms_key")
-                    }).await.unwrap();
+                    })
+                    .await
+                    .unwrap();
                     signing_key = Some(SigningMethod::Kms(kms_key));
                 };
                 let runtime = Runtime::new().unwrap();
@@ -139,7 +140,7 @@ impl EifSigner {
             .write(true)
             .open(&self.eif_path)
             .unwrap();
-        
+
         let eif_signature = vec![pcr_signature];
         let serialized_signature =
             to_vec(&eif_signature).expect("Could not serialize the signature");
@@ -185,7 +186,7 @@ impl EifSigner {
 
                     eif_content.push(eif_section.clone().to_be_bytes());
                     eif_content.push(serialized_signature.clone());
-                    
+
                     let mut buf = Vec::new();
                     eif_file
                         .seek(SeekFrom::Start(curr_seek as u64))
@@ -210,11 +211,11 @@ impl EifSigner {
             eif_file
                 .seek(SeekFrom::Start(0))
                 .map_err(|e| format!("Failed to seek file: {:?}", e))?;
-            
+
             eif_file
                 .write_all(&header.clone().to_be_bytes())
                 .map_err(|e| format!("Error while writing EIF: {:?}", e))?;
-    
+
             eif_file
                 .seek(SeekFrom::Start(signature_seek as u64))
                 .map_err(|e| format!("Failed to seek file: {:?}", e))?;
@@ -222,7 +223,6 @@ impl EifSigner {
                 eif_file
                     .write_all(&content)
                     .map_err(|e| format!("Error while writing EIF: {:?}", e))?;
-
             }
         } else {
             eif_file
@@ -230,14 +230,15 @@ impl EifSigner {
                 .map_err(|e| format!("Error while reading EIF header: {:?}", e))?;
             let mut header = EifHeader::from_be_bytes(&header_buf).unwrap();
             // Update header information
-            header.section_offsets[header.num_sections as usize] = eif_file.metadata().unwrap().len();
+            header.section_offsets[header.num_sections as usize] =
+                eif_file.metadata().unwrap().len();
             header.section_sizes[header.num_sections as usize] = signature_size;
             header.num_sections += 1;
-            
+
             eif_file
                 .seek(SeekFrom::Start(0))
                 .map_err(|e| format!("Failed to seek file: {:?}", e))?;
-            
+
             eif_file
                 .write_all(&header.clone().to_be_bytes())
                 .map_err(|e| format!("Error while writing EIF: {:?}", e))?;
@@ -260,16 +261,20 @@ impl EifSigner {
     }
 
     /// Generates the signature based on the selected method and writes it to the EIF
-    pub fn sign_image(&mut self) -> Result<BTreeMap<std::string::String, std::string::String>, String> {
+    pub fn sign_image(
+        &mut self,
+    ) -> Result<BTreeMap<std::string::String, std::string::String>, String> {
         let payload = self
             .get_payload()
             .expect("Failed to get payload for image signing.");
-    
+
         let pcr_signature = match &self.signing_key {
             SigningMethod::PrivateKey(signing_key) => {
-                let private_key = PKey::private_key_from_pem(signing_key.as_ref())
-                    .map_err(|e| format!("Could not deserialize the PEM-formatted private key: {}", e))?;
-    
+                let private_key =
+                    PKey::private_key_from_pem(signing_key.as_ref()).map_err(|e| {
+                        format!("Could not deserialize the PEM-formatted private key: {}", e)
+                    })?;
+
                 let signature =
                     CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
                         .unwrap()
@@ -277,7 +282,7 @@ impl EifSigner {
                         .unwrap();
                 PcrSignature {
                     signing_certificate: self.signing_certificate.clone(),
-                    signature,               
+                    signature,
                 }
             }
             SigningMethod::Kms(signing_key) => {
@@ -290,10 +295,12 @@ impl EifSigner {
                             .unwrap()
                             .as_bytes(false)
                             .unwrap()
-                    }).await  
+                    })
+                    .await
                 };
-    
-                let runtime = Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+
+                let runtime =
+                    Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
                 let signature = runtime.block_on(act).unwrap();
 
                 PcrSignature {
@@ -330,8 +337,9 @@ impl EifSigner {
 
         let len_without_crc = EifHeader::size() - size_of::<u32>();
         eif_file
-            .seek(SeekFrom::Start(len_without_crc as u64)).unwrap();
-            
+            .seek(SeekFrom::Start(len_without_crc as u64))
+            .unwrap();
+
         eif_file
             .write_all(&eif_crc.to_be_bytes())
             .expect("Failed to write signature header");
