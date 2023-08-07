@@ -266,6 +266,10 @@ impl EifReader {
         let measured_payload =
             to_vec(&pcr_info).map_err(|e| format!("Could not serialize PCR info: {:?}", e))?;
 
+        // Deserialize COSE signature and extract the payload using the public key
+        let pcr_sign = CoseSign1::from_bytes(&des_sign[0].signature[..])
+            .map_err(|e| format!("Failed to deserialize signature: {:?}", e))?;
+
         // Extract public key from certificate and convert to PKey
         let public_key = &cert
             .public_key()
@@ -276,10 +280,6 @@ impl EifReader {
                 .map_err(|e| format!("Failed to serialize public key: {:?}", e))?[..],
         )
         .map_err(|e| format!("Failed to decode key nit elliptic key structure: {:?}", e))?;
-
-        // Deserialize COSE signature and extract the payload using the public key
-        let pcr_sign = CoseSign1::from_bytes(&des_sign[0].signature[..])
-            .map_err(|e| format!("Failed to deserialize signature: {:?}", e))?;
         let coses_payload = pcr_sign
             .get_payload::<Openssl>(Some(coses_key.as_ref()))
             .map_err(|e| format!("Failed to get signature payload: {:?}", e))?;
