@@ -814,3 +814,172 @@ impl PcrSignatureChecker {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::{SignKey, SignKeyData, SignKeyDataInfo, SignKeyInfo};
+    use std::{env, io::Write};
+    use tempfile::{NamedTempFile, TempPath};
+
+    const TEST_CERT_CONTENT: &[u8] = "test cert content".as_bytes();
+    const TEST_PKEY_CONTENT: &[u8] = "test key content".as_bytes();
+
+    fn generate_certificate_file() -> Result<TempPath, std::io::Error> {
+        let cert_file = NamedTempFile::new()?;
+        cert_file.as_file().write(TEST_CERT_CONTENT)?;
+        Ok(cert_file.into_temp_path())
+    }
+
+    fn generate_pkey_file() -> Result<TempPath, std::io::Error> {
+        let key_file = NamedTempFile::new()?;
+        key_file.as_file().write(TEST_PKEY_CONTENT)?;
+        Ok(key_file.into_temp_path())
+    }
+
+    #[test]
+    fn test_local_sign_key_data_from_invalid_local_key_info() -> Result<(), std::io::Error> {
+        let cert_file_path = generate_certificate_file()?;
+
+        let key_data = SignKeyData::new(&SignKeyDataInfo {
+            cert_path: cert_file_path.to_str().unwrap().to_string(),
+            key_info: SignKeyInfo::LocalPrivateKeyInfo {
+                path: "/invalid/path".to_string(),
+            },
+        });
+
+        assert!(key_data.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_local_sign_key_data_from_invalid_cert_key_info() -> Result<(), std::io::Error> {
+        let key_file_path = generate_pkey_file()?;
+
+        let key_data = SignKeyData::new(&SignKeyDataInfo {
+            cert_path: "/invalid/path".to_string(),
+            key_info: SignKeyInfo::LocalPrivateKeyInfo {
+                path: key_file_path.to_str().unwrap().to_string(),
+            },
+        });
+
+        assert!(key_data.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_local_sign_key_data_from_valid_key_info() -> Result<(), std::io::Error> {
+        let cert_file_path = generate_certificate_file()?;
+        let key_file_path = generate_pkey_file()?;
+
+        let key_data = SignKeyData::new(&SignKeyDataInfo {
+            cert_path: cert_file_path.to_str().unwrap().to_string(),
+            key_info: SignKeyInfo::LocalPrivateKeyInfo {
+                path: key_file_path.to_str().unwrap().to_string(),
+            },
+        })
+        .unwrap();
+
+        assert_eq!(key_data.cert, TEST_CERT_CONTENT);
+        assert!(matches!(key_data.key, SignKey::LocalPrivateKey(key) if key == TEST_PKEY_CONTENT));
+
+        Ok(())
+    }
+
+    mod kms {
+        use std::sync::Mutex;
+
+        use super::*;
+
+        // Mutex to lock and prevent running tests that modify AWS_REGION env variable
+        // within multiple threads
+        static ENV_MUTEX: std::sync::Mutex<i32> = Mutex::new(0);
+
+        #[test]
+        fn test_kms_sign_key_data_from_invalid_cert_key_info() -> Result<(), std::io::Error> {
+            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
+            let key_region = env::var("AWS_KMS_TEST_KEY_REGION").ok();
+
+            let key_data = SignKeyData::new(&SignKeyDataInfo {
+                cert_path: "/invalid/path".to_string(),
+                key_info: SignKeyInfo::KmsKeyInfo {
+                    id: key_id,
+                    region: key_region,
+                },
+            });
+
+            assert!(key_data.is_err());
+            Ok(())
+        }
+
+        #[test]
+        fn test_kms_sign_key_data_from_valid_key_info_explicit_region() -> Result<(), std::io::Error>
+        {
+            let cert_file_path = generate_certificate_file()?;
+            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
+            let key_region =
+                env::var("AWS_KMS_TEST_KEY_REGION").expect("Please set AWS_KMS_TEST_KEY_REGION");
+            let _m = ENV_MUTEX.lock().unwrap();
+            env::remove_var("AWS_REGION");
+
+            let key_data = SignKeyData::new(&SignKeyDataInfo {
+                cert_path: cert_file_path.to_str().unwrap().to_string(),
+                key_info: SignKeyInfo::KmsKeyInfo {
+                    id: key_id,
+                    region: Some(key_region),
+                },
+            })
+            .unwrap();
+
+            assert_eq!(key_data.cert, TEST_CERT_CONTENT);
+            assert!(matches!(key_data.key, SignKey::KmsKey(_)));
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_kms_sign_key_data_from_valid_key_info_region_from_env() -> Result<(), std::io::Error>
+        {
+            let cert_file_path = generate_certificate_file()?;
+            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
+            let key_region =
+                env::var("AWS_KMS_TEST_KEY_REGION").expect("Please set AWS_KMS_TEST_KEY_REGION");
+
+            let _m = ENV_MUTEX.lock().unwrap();
+            env::set_var("AWS_REGION", key_region);
+
+            let key_data = SignKeyData::new(&SignKeyDataInfo {
+                cert_path: cert_file_path.to_str().unwrap().to_string(),
+                key_info: SignKeyInfo::KmsKeyInfo {
+                    id: key_id,
+                    region: None,
+                },
+            })
+            .unwrap();
+
+            assert_eq!(key_data.cert, TEST_CERT_CONTENT);
+            assert!(matches!(key_data.key, SignKey::KmsKey(_)));
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_kms_sign_key_data_from_valid_key_info_no_region() -> Result<(), std::io::Error> {
+            let cert_file_path = generate_certificate_file()?;
+            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
+
+            let _m = ENV_MUTEX.lock().unwrap();
+            env::remove_var("AWS_REGION");
+
+            let key_data = SignKeyData::new(&SignKeyDataInfo {
+                cert_path: cert_file_path.to_str().unwrap().to_string(),
+                key_info: SignKeyInfo::KmsKeyInfo {
+                    id: key_id,
+                    region: None,
+                },
+            });
+
+            assert!(key_data.is_err());
+            Ok(())
+        }
+    }
+}
