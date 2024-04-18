@@ -242,7 +242,7 @@ impl EifReader {
 
         // Parse issuer into a BTreeMap
         let mut issuer_name = BTreeMap::new();
-        for (_, e) in cert.issuer_name().entries().enumerate() {
+        for e in cert.issuer_name().entries() {
             issuer_name.insert(
                 e.object().to_string(),
                 format!("{:?}", e.data()).replace(&['\"'][..], ""),
