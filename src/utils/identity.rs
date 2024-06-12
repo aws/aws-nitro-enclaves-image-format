@@ -3,6 +3,7 @@
 
 use crate::defs::EifBuildInfo;
 use chrono::offset::Utc;
+use chrono::DateTime;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -17,8 +18,12 @@ pub fn generate_build_info(
     build_tool: &str,
     build_tool_version: &str,
     img_config_path: &str,
+    build_time_override: Option<DateTime<Utc>>,
 ) -> Result<EifBuildInfo, String> {
-    let now = Utc::now();
+    let now = match build_time_override {
+        Some(val) => val,
+        None => Utc::now(),
+    };
 
     let config_file = File::open(img_config_path)
         .map_err(|e| format!("Failed to open kernel image config file: {}", e))?;
@@ -50,6 +55,15 @@ macro_rules! generate_build_info {
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
             $kernel_config_path,
+            None,
+        )
+    };
+    ($kernel_config_path:expr, $time_override:expr) => {
+        $crate::utils::identity::generate_build_info(
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+            $kernel_config_path,
+            $time_override,
         )
     };
 }
