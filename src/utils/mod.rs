@@ -682,8 +682,8 @@ impl PcrSignatureChecker {
                 let des_sign: Vec<PcrSignature> = from_slice(&buf[..])
                     .map_err(|e| format!("Error deserializing certificate: {:?}", e))?;
 
-                signing_certificate = des_sign[0].signing_certificate.clone();
-                signature = des_sign[0].signature.clone();
+                signing_certificate.clone_from(&des_sign[0].signing_certificate);
+                signature.clone_from(&des_sign[0].signature);
             }
 
             curr_seek += section.section_size as usize;
