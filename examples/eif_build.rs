@@ -1,4 +1,4 @@
-// Copyright 2019-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright 2019-2024 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #![deny(warnings)]
@@ -18,9 +18,9 @@ use aws_nitro_enclaves_image_format::defs::EifIdentityInfo;
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
-    utils::{get_pcrs, EifBuilder, SignEnclaveInfo},
+    utils::{get_pcrs, EifBuilder, SignKeyData, SignKeyDataInfo, SignKeyInfo},
 };
-use clap::{App, Arg};
+use clap::{App, Arg, ArgGroup};
 use serde_json::json;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
@@ -76,13 +76,33 @@ fn main() {
             Arg::with_name("signing-certificate")
                 .long("signing-certificate")
                 .help("Specify the path to the signing certificate")
-                .takes_value(true),
+                .takes_value(true)
+                .requires("signing-key"),
         )
         .arg(
             Arg::with_name("private-key")
                 .long("private-key")
                 .help("Specify the path to the private-key")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("kms-key-id")
+                .long("kms-key-id")
+                .help("Specify unique id of the KMS key")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("kms-key-region")
+                .long("kms-key-region")
+                .help("Specify region in which the KMS key resides")
+                .takes_value(true)
+                .requires("kms-key-id")
+        )
+        .group(
+            ArgGroup::new("signing-key")
+                .args(&["kms-key-id", "private-key"])
+                .multiple(false)
+                .requires("signing-certificate")
         )
         .arg(
             Arg::with_name("sha256")
@@ -150,13 +170,28 @@ fn main() {
 
     let private_key = matches.value_of("private-key");
 
-    let sign_info = match (signing_certificate, private_key) {
+    let kms_key_id = matches.value_of("kms-key-id");
+    let kms_key_region = matches.value_of("kms-key-region");
+
+    let sign_key_info = match (kms_key_id, private_key) {
         (None, None) => None,
-        (Some(cert_path), Some(key_path)) => {
-            Some(SignEnclaveInfo::new(cert_path, key_path).expect("Could not read signing info"))
-        }
-        _ => panic!("Both signing-certificate and private-key parameters must be provided"),
+        (Some(kms_id), None) => Some(SignKeyInfo::KmsKeyInfo {
+            id: kms_id.to_string(),
+            region: kms_key_region.map(str::to_string),
+        }),
+        (None, Some(key_path)) => Some(SignKeyInfo::LocalPrivateKeyInfo {
+            path: key_path.to_string(),
+        }),
+        _ => panic!("kms-key-id and private-key parameters are mutually exclusive"),
     };
+
+    let sign_key_data = sign_key_info.map(|key_info| {
+        SignKeyData::new(&SignKeyDataInfo {
+            cert_path: signing_certificate.unwrap().to_string(),
+            key_info: key_info,
+        })
+        .expect("Could not read signing info")
+    });
 
     let img_name = matches.value_of("image_name").map(|val| val.to_string());
     let img_version = matches.value_of("image_name").map(|val| val.to_string());
@@ -190,7 +225,7 @@ fn main() {
             cmdline,
             ramdisks,
             output_path,
-            sign_info,
+            sign_key_data,
             Sha512::new(),
             eif_info,
         );
@@ -200,7 +235,7 @@ fn main() {
             cmdline,
             ramdisks,
             output_path,
-            sign_info,
+            sign_key_data,
             Sha256::new(),
             eif_info,
         );
@@ -210,7 +245,7 @@ fn main() {
             cmdline,
             ramdisks,
             output_path,
-            sign_info,
+            sign_key_data,
             Sha384::new(),
             eif_info,
         );
@@ -222,7 +257,7 @@ pub fn build_eif<T: Digest + Debug + Write + Clone>(
     cmdline: &str,
     ramdisks: Vec<&str>,
     output_path: &str,
-    sign_info: Option<SignEnclaveInfo>,
+    sign_info: Option<SignKeyData>,
     hasher: T,
     eif_info: EifIdentityInfo,
 ) {
