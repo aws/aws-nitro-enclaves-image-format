@@ -101,9 +101,6 @@ impl EifReader {
         let header = EifHeader::from_be_bytes(&header_buf)
             .map_err(|e| format!("Error while parsing EIF header: {:?}", e))?;
         curr_seek += EifHeader::size();
-        eif_file
-            .seek(SeekFrom::Start(curr_seek as u64))
-            .map_err(|e| format!("Failed to seek file from start: {:?}", e))?;
 
         let mut section_buf = vec![0u8; EifSectionHeader::size()];
         let mut image_hasher = EifHasher::new_without_cache(Sha384::new())
@@ -118,18 +115,41 @@ impl EifReader {
         let mut signature_section = None;
         let mut metadata = None;
 
-        // Read all section headers and treat by type
-        while eif_file
-            .read_exact(&mut section_buf)
-            .map_err(|e| format!("Error while reading EIF header: {:?}", e))
-            .is_ok()
-        {
-            let section = EifSectionHeader::from_be_bytes(&section_buf)
-                .map_err(|e| format!("Error extracting EIF section header: {:?}", e))?;
-            eif_crc.write(&section_buf);
+        for iter in 0..header.num_sections {
+            let section_offset = header.section_offsets[iter as usize];
+            let section_size = header.section_sizes[iter as usize];
 
-            let mut buf = vec![0u8; section.section_size as usize];
+            // Consider data in any potential gaps between sections for CRC calculation
+            if section_offset > curr_seek as u64 {
+                let gap_size = section_offset - curr_seek as u64;
+                let mut buf_gap = vec![0u8; gap_size as usize];
+                eif_file
+                    .seek(SeekFrom::Start(curr_seek as u64))
+                    .map_err(|e| format!("Failed to seek file from start: {:?}", e))?;
+                eif_file
+                    .read_exact(&mut buf_gap)
+                    .map_err(|e| format!("Error while reading EIF file: {:?}", e))?;
+                eif_crc.write(&buf_gap);
+                curr_seek += gap_size as usize;
+            }
+
+            eif_file
+                .seek(SeekFrom::Start(curr_seek as u64))
+                .map_err(|e| format!("Failed to seek file from start: {:?}", e))?;
+            eif_file
+                .read_exact(&mut section_buf)
+                .map_err(|e| format!("Error while reading EIF header: {:?}", e))?;
+            let section_header = EifSectionHeader::from_be_bytes(&section_buf)
+                .map_err(|e| format!("Error extracting EIF section header: {:?}", e))?;
+
+            eif_crc.write(&section_buf);
             curr_seek += EifSectionHeader::size();
+
+            if section_header.section_size != section_size {
+                return Err(format!("Error while parsing EIF file: EifHeader::section_sizes[{:?}] does not match EifSectionHeader::size", iter));
+            }
+
+            let mut buf = vec![0u8; section_size as usize];
             eif_file
                 .seek(SeekFrom::Start(curr_seek as u64))
                 .map_err(|e| format!("Failed to seek after EIF header: {:?}", e))?;
@@ -138,12 +158,9 @@ impl EifReader {
                 .map_err(|e| format!("Error while reading kernel from EIF: {:?}", e))?;
             eif_crc.write(&buf);
 
-            curr_seek += section.section_size as usize;
-            eif_file
-                .seek(SeekFrom::Start(curr_seek as u64))
-                .map_err(|e| format!("Failed to seek after EIF section: {:?}", e))?;
+            curr_seek += section_size as usize;
 
-            match section.section_type {
+            match section_header.section_type {
                 EifSectionType::EifSectionKernel | EifSectionType::EifSectionCmdline => {
                     image_hasher.write_all(&buf).map_err(|e| {
                         format!("Failed to write EIF section to image_hasher: {:?}", e)
