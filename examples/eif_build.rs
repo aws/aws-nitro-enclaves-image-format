@@ -14,13 +14,15 @@
 ///
 use std::path::Path;
 
-use aws_nitro_enclaves_image_format::defs::{EifIdentityInfo, EIF_HDR_ARCH_ARM64};
+use aws_nitro_enclaves_image_format::defs::{EifIdentityInfo, EIF_HDR_ARCH_ARM64, EifBuildInfo};
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
     utils::{get_pcrs, EifBuilder, SignEnclaveInfo},
 };
-use clap::{App, Arg};
+use chrono::offset::Utc;
+use clap::{App, Arg, ValueSource};
+use ValueSource::CommandLine;
 use serde_json::json;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
@@ -28,6 +30,11 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 fn main() {
+    let now = Utc::now().to_rfc3339();
+    let build_tool = env!("CARGO_PKG_NAME").to_string();
+    let build_tool_version = env!("CARGO_PKG_VERSION").to_string();
+    let img_os = "OS".to_string();
+    let img_kernel = "kernel".to_string();
     let matches = App::new("Enclave image format builder")
         .about("Builds an eif file")
         .arg(
@@ -42,7 +49,6 @@ fn main() {
             Arg::with_name("kernel_config")
                 .long("kernel_config")
                 .value_name("FILE")
-                .required(true)
                 .help("Sets path to a bzImage.config/Image.config file for x86_64/aarch64 architecture")
                 .takes_value(true),
         )
@@ -123,24 +129,53 @@ fn main() {
         .arg(
             Arg::with_name("arch")
                 .long("arch")
-                .value_name("(x86_64|aarch64)")
                 .help("Sets image architecture")
                 .default_value("x86_64")
+                .value_parser(["x86_64", "aarch64"])
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("build_time")
+                .long("build-time")
+                .help("Overrides image build time.")
+                .default_value(&now)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("build_tool")
+                .long("build-tool")
+                .help("Image build tool name.")
+                .default_value(&build_tool)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("build_tool_version")
+                .long("build-tool-version")
+                .help("Overrides image build tool version.")
+                .default_value(&build_tool_version)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("img_os")
+                .long("img-os")
+                .help("Overrides image Operating System name.")
+                .default_value(&img_os)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("img_kernel")
+                .long("img-kernel")
+                .help("Overrides image Operating System kernel version.")
+                .default_value(&img_kernel)
                 .takes_value(true),
         )
         .get_matches();
 
-    let arch = matches
-        .value_of("arch")
-        .expect("Architecture is a mandatory option");
+    let arch = matches.value_of("arch").expect("default value");
 
     let kernel_path = matches
         .value_of("kernel")
         .expect("Kernel path is a mandatory option");
-
-    let kernel_config_path = matches
-        .value_of("kernel_config")
-        .expect("Kernel config path is a mandatory option");
 
     let cmdline = matches
         .value_of("cmdline")
@@ -180,6 +215,56 @@ fn main() {
         None => json!(null),
     };
 
+    let mut build_info = EifBuildInfo {
+        build_time: matches
+            .get_one::<String>("build_time")
+            .expect("default value")
+            .to_string(),
+        build_tool: matches
+            .get_one::<String>("build_tool")
+            .expect("default value")
+            .to_string(),
+        build_tool_version: matches
+            .get_one::<String>("build_tool_version")
+            .expect("default value")
+            .to_string(),
+        img_os: matches
+            .get_one::<String>("img_os")
+            .expect("default value")
+            .to_string(),
+        img_kernel: matches
+            .get_one::<String>("img_kernel")
+            .expect("default value")
+            .to_string(),
+    };
+
+    if let Some(kernel_config) = matches.get_one::<String>("kernel_config") {
+        build_info = generate_build_info!(kernel_config).expect("Can not generate build info");
+    }
+
+    if matches.value_source("build_time") == Some(CommandLine) {
+        build_info.build_time = matches.get_one::<String>("build_time").expect("default value").to_string();
+    }
+
+    if matches.value_source("build_tool") == Some(CommandLine) {
+        build_info.build_tool = matches.get_one::<String>("build_tool").expect("default_value").to_string();
+    }
+
+    if matches.value_source("build_tool_version") == Some(CommandLine) {
+        build_info.build_tool_version = matches
+            .get_one::<String>("build_tool_version")
+            .expect("default value")
+            .to_string();
+    }
+
+    if matches.value_source("img_os") == Some(CommandLine) {
+        build_info.img_os = matches.get_one::<String>("img_os").expect("default value").to_string();
+    }
+
+    if matches.value_source("img_kernel") == Some(CommandLine) {
+        build_info.img_kernel = matches.get_one::<String>("img_kernel").expect("default value").to_string();
+    }
+
     let eif_info = EifIdentityInfo {
         img_name: img_name.unwrap_or_else(|| {
             // Set default value to kernel file name
@@ -191,7 +276,7 @@ fn main() {
                 .to_string()
         }),
         img_version: img_version.unwrap_or_else(|| "1.0".to_string()),
-        build_info: generate_build_info!(kernel_config_path).expect("Can not generate build info"),
+        build_info: build_info,
         docker_info: json!(null),
         custom_info: metadata,
     };
