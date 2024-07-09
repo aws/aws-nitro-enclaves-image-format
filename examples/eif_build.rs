@@ -14,7 +14,7 @@
 ///
 use std::path::Path;
 
-use aws_nitro_enclaves_image_format::defs::EifIdentityInfo;
+use aws_nitro_enclaves_image_format::defs::{EifIdentityInfo, EIF_HDR_ARCH_ARM64};
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
@@ -120,7 +120,19 @@ fn main() {
                 .help("Path to JSON containing the custom metadata provided by the user.")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("arch")
+                .long("arch")
+                .value_name("(x86_64|aarch64)")
+                .help("Sets image architecture")
+                .default_value("x86_64")
+                .takes_value(true),
+        )
         .get_matches();
+
+    let arch = matches
+        .value_of("arch")
+        .expect("Architecture is a mandatory option");
 
     let kernel_path = matches
         .value_of("kernel")
@@ -193,6 +205,7 @@ fn main() {
             sign_info,
             Sha512::new(),
             eif_info,
+            arch,
         );
     } else if sha256 {
         build_eif(
@@ -203,6 +216,7 @@ fn main() {
             sign_info,
             Sha256::new(),
             eif_info,
+            arch,
         );
     } else {
         build_eif(
@@ -213,6 +227,7 @@ fn main() {
             sign_info,
             Sha384::new(),
             eif_info,
+            arch,
         );
     }
 }
@@ -225,6 +240,7 @@ pub fn build_eif<T: Digest + Debug + Write + Clone>(
     sign_info: Option<SignEnclaveInfo>,
     hasher: T,
     eif_info: EifIdentityInfo,
+    arch: &str,
 ) {
     let mut output_file = OpenOptions::new()
         .read(true)
@@ -234,12 +250,18 @@ pub fn build_eif<T: Digest + Debug + Write + Clone>(
         .open(output_path)
         .expect("Could not create output file");
 
+
+    let flags = match arch {
+        "aarch64" => EIF_HDR_ARCH_ARM64,
+        _ => 0,
+    };
+
     let mut build = EifBuilder::new(
         Path::new(kernel_path),
         cmdline.to_string(),
         sign_info,
         hasher.clone(),
-        0, // flags
+        flags, // flags
         eif_info,
     );
     for ramdisk in ramdisks {
