@@ -20,6 +20,80 @@ See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more inform
 
 This project is licensed under the Apache-2.0 License.
 
+## Building
+
+To compile the `eif_build` tool, run
+
+```sh
+$ cargo build --examples --release
+```
+
+The resulting binary will be under `./target/release/examples/eif_build`.
+
+## Usage
+
+This package is mostly intended as a library. However, it also contains the `eif_build` tool which you can use to create AWS Nitro Enclave image files:
+
+```plain
+Enclave image format builder
+Builds an eif file
+
+USAGE:
+    eif_build [OPTIONS] --kernel <FILE> --cmdline <String> --output <FILE> --ramdisk <FILE>
+
+OPTIONS:
+        --arch <(x86_64|aarch64)>
+            Sets image architecture [default: x86_64]
+
+        --build-time <build_time>
+            Overrides image build time. [default: 2024-07-09T17:16:38.424202433+00:00]
+
+        --build-tool <build_tool>
+            Image build tool name. [default: eif_build]
+
+        --build-tool-version <build_tool_version>
+            Overrides image build tool version. [default: 0.2.0]
+
+        --cmdline <String>
+            Sets the cmdline
+
+    -h, --help
+            Print help information
+
+        --img-kernel <img_kernel>
+            Overrides image Operating System kernel version. [default: "Unknown version"]
+
+        --img-os <img_os>
+            Overrides image Operating System name. [default: "Generic Linux"]
+
+        --kernel <FILE>
+            Sets path to a bzImage/Image file for x86_64/aarch64 architecture
+
+        --kernel_config <FILE>
+            Sets path to a bzImage.config/Image.config file for x86_64/aarch64 architecture
+
+        --metadata <metadata>
+            Path to JSON containing the custom metadata provided by the user.
+
+        --name <image_name>
+            Name for enclave image
+
+        --output <FILE>
+            Specify output file path
+
+        --private-key <private-key>
+            Specify the path to the private-key
+
+        --ramdisk <FILE>
+            Sets path to a ramdisk file representing a cpio.gz archive
+
+        --signing-certificate <signing-certificate>
+            Specify the path to the signing certificate
+
+        --version <image_version>
+            Version of the enclave image
+```
+
 ## Enclave Image File (EIF) Specification
 
 Date: 2024-06-21
@@ -592,4 +666,3 @@ For `PCR8` this means `content_digest` is calculated as follows:
 
 ```
 content_digest[PCR8] = sha384sum( signing_certificate_in_DER )
-```
