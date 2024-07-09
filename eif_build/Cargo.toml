@@ -1,0 +1,20 @@
+[package]
+name = "eif_build"
+version = "0.2.0"
+authors = ["The AWS Nitro Enclaves Team <aws-nitro-enclaves-devel@amazon.com>"]
+edition = "2018"
+license = "Apache-2.0"
+description = "This CLI tool provides a low level path to assemble an enclave image format (EIF) file used in AWS Nitro Enclaves."
+repository = "https://github.com/aws/aws-nitro-enclaves-image-format"
+readme = "README.md"
+keywords = ["Nitro", "Enclaves", "AWS", "EIF"]
+rust-version = "1.68"
+
+[dependencies]
+aws-nitro-enclaves-image-format = { path = ".." }
+sha2 = "0.9.5"
+serde = { version = ">=1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = "3.2"
+chrono = { version = "0.4", default-features = false, features = ["clock"]}
+
