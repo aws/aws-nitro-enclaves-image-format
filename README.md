@@ -25,10 +25,10 @@ This project is licensed under the Apache-2.0 License.
 To compile the `eif_build` tool, run
 
 ```sh
-$ cargo build --examples --release
+$ cargo build --all --release
 ```
 
-The resulting binary will be under `./target/release/examples/eif_build`.
+The resulting binary will be under `./target/release/eif_build`.
 
 ## Usage
 
