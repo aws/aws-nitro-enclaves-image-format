@@ -14,7 +14,7 @@
 ///
 use std::path::Path;
 
-use aws_nitro_enclaves_image_format::defs::{EifIdentityInfo, EIF_HDR_ARCH_ARM64, EifBuildInfo};
+use aws_nitro_enclaves_image_format::defs::{EifBuildInfo, EifIdentityInfo, EIF_HDR_ARCH_ARM64};
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
@@ -22,10 +22,10 @@ use aws_nitro_enclaves_image_format::{
 };
 use chrono::offset::Utc;
 use clap::{App, Arg, ValueSource};
-use ValueSource::CommandLine;
 use serde_json::json;
 use sha2::{Digest, Sha384};
 use std::fs::OpenOptions;
+use ValueSource::CommandLine;
 
 fn main() {
     let now = Utc::now().to_rfc3339();
@@ -220,11 +220,17 @@ fn main() {
     }
 
     if matches.value_source("build_time") == Some(CommandLine) {
-        build_info.build_time = matches.get_one::<String>("build_time").expect("default value").to_string();
+        build_info.build_time = matches
+            .get_one::<String>("build_time")
+            .expect("default value")
+            .to_string();
     }
 
     if matches.value_source("build_tool") == Some(CommandLine) {
-        build_info.build_tool = matches.get_one::<String>("build_tool").expect("default_value").to_string();
+        build_info.build_tool = matches
+            .get_one::<String>("build_tool")
+            .expect("default_value")
+            .to_string();
     }
 
     if matches.value_source("build_tool_version") == Some(CommandLine) {
@@ -235,11 +241,17 @@ fn main() {
     }
 
     if matches.value_source("img_os") == Some(CommandLine) {
-        build_info.img_os = matches.get_one::<String>("img_os").expect("default value").to_string();
+        build_info.img_os = matches
+            .get_one::<String>("img_os")
+            .expect("default value")
+            .to_string();
     }
 
     if matches.value_source("img_kernel") == Some(CommandLine) {
-        build_info.img_kernel = matches.get_one::<String>("img_kernel").expect("default value").to_string();
+        build_info.img_kernel = matches
+            .get_one::<String>("img_kernel")
+            .expect("default value")
+            .to_string();
     }
 
     let eif_info = EifIdentityInfo {
@@ -286,7 +298,6 @@ pub fn build_eif(
         .truncate(true)
         .open(output_path)
         .expect("Could not create output file");
-
 
     let flags = match arch {
         "aarch64" => EIF_HDR_ARCH_ARM64,
