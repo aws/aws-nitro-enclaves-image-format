@@ -301,7 +301,8 @@ pub fn build_eif(
 
     let flags = match arch {
         "aarch64" => EIF_HDR_ARCH_ARM64,
-        _ => 0,
+        "x86_64" => 0,
+        _ => None.expect(format!("Invalid architecture {arch}").as_str()),
     };
 
     let mut build = EifBuilder::new(
