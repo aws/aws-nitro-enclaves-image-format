@@ -24,10 +24,8 @@ use chrono::offset::Utc;
 use clap::{App, Arg, ValueSource};
 use ValueSource::CommandLine;
 use serde_json::json;
-use sha2::{Digest, Sha256, Sha384, Sha512};
-use std::fmt::Debug;
+use sha2::{Digest, Sha384};
 use std::fs::OpenOptions;
-use std::io::Write;
 
 fn main() {
     let now = Utc::now().to_rfc3339();
@@ -89,24 +87,6 @@ fn main() {
                 .long("private-key")
                 .help("Specify the path to the private-key")
                 .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("sha256")
-                .long("sha256")
-                .help("Sets algorithm to be used for measuring the image")
-                .group("measurement_alg"),
-        )
-        .arg(
-            Arg::with_name("sha512")
-                .long("sha512")
-                .help("Sets algorithm to be used for measuring the image")
-                .group("measurement_alg"),
-        )
-        .arg(
-            Arg::with_name("sha384")
-                .long("sha384")
-                .help("Sets algorithm to be used for measuring the image")
-                .group("measurement_alg"),
         )
         .arg(
             Arg::with_name("image_name")
@@ -180,9 +160,6 @@ fn main() {
     let cmdline = matches
         .value_of("cmdline")
         .expect("Cmdline is a mandatory option");
-
-    let sha512 = matches.is_present("sha512");
-    let sha256 = matches.is_present("sha256");
 
     let ramdisks: Vec<&str> = matches
         .values_of("ramdisk")
@@ -281,52 +258,27 @@ fn main() {
         custom_info: metadata,
     };
 
-    if sha512 {
-        build_eif(
-            kernel_path,
-            cmdline,
-            ramdisks,
-            output_path,
-            sign_info,
-            Sha512::new(),
-            eif_info,
-            arch,
-        );
-    } else if sha256 {
-        build_eif(
-            kernel_path,
-            cmdline,
-            ramdisks,
-            output_path,
-            sign_info,
-            Sha256::new(),
-            eif_info,
-            arch,
-        );
-    } else {
-        build_eif(
-            kernel_path,
-            cmdline,
-            ramdisks,
-            output_path,
-            sign_info,
-            Sha384::new(),
-            eif_info,
-            arch,
-        );
-    }
+    build_eif(
+        kernel_path,
+        cmdline,
+        ramdisks,
+        output_path,
+        sign_info,
+        eif_info,
+        arch,
+    );
 }
 
-pub fn build_eif<T: Digest + Debug + Write + Clone>(
+pub fn build_eif(
     kernel_path: &str,
     cmdline: &str,
     ramdisks: Vec<&str>,
     output_path: &str,
     sign_info: Option<SignEnclaveInfo>,
-    hasher: T,
     eif_info: EifIdentityInfo,
     arch: &str,
 ) {
+    let hasher = Sha384::new();
     let mut output_file = OpenOptions::new()
         .read(true)
         .create(true)
