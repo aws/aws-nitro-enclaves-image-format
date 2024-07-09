@@ -6,7 +6,7 @@ use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
 };
 use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
-use crc::{crc32, Hasher32};
+use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
@@ -83,7 +83,8 @@ impl EifReader {
     /// on section type. Also writes sections in the eif_crc, excluding the
     /// CRC from the header
     pub fn from_eif(eif_path: String) -> Result<Self, String> {
-        let mut eif_crc = crc32::Digest::new_with_initial(crc32::IEEE, 0);
+        let crc_gen = Crc::<u32>::new(&CRC_32_ISO_HDLC);
+        let mut eif_crc = crc_gen.digest();
         let mut curr_seek = 0;
         let mut eif_file =
             File::open(eif_path).map_err(|e| format!("Failed to open the EIF file: {:?}", e))?;
@@ -96,7 +97,7 @@ impl EifReader {
 
         // Exclude last field of header which is CRC
         let len_without_crc = header_buf.len() - size_of::<u32>();
-        eif_crc.write(&header_buf[..len_without_crc]);
+        eif_crc.update(&header_buf[..len_without_crc]);
 
         let header = EifHeader::from_be_bytes(&header_buf)
             .map_err(|e| format!("Error while parsing EIF header: {:?}", e))?;
@@ -126,7 +127,7 @@ impl EifReader {
         {
             let section = EifSectionHeader::from_be_bytes(&section_buf)
                 .map_err(|e| format!("Error extracting EIF section header: {:?}", e))?;
-            eif_crc.write(&section_buf);
+            eif_crc.update(&section_buf);
 
             let mut buf = vec![0u8; section.section_size as usize];
             curr_seek += EifSectionHeader::size();
@@ -136,7 +137,7 @@ impl EifReader {
             eif_file
                 .read_exact(&mut buf)
                 .map_err(|e| format!("Error while reading kernel from EIF: {:?}", e))?;
-            eif_crc.write(&buf);
+            eif_crc.update(&buf);
 
             curr_seek += section.section_size as usize;
             eif_file
@@ -202,7 +203,7 @@ impl EifReader {
             bootstrap_hasher,
             app_hasher,
             cert_hasher,
-            eif_crc: eif_crc.sum32(),
+            eif_crc: eif_crc.finalize(),
             sign_check: None,
             metadata,
         })

@@ -10,7 +10,7 @@ use crate::defs::{
     MAX_NUM_SECTIONS,
 };
 use aws_nitro_enclaves_cose::{crypto::Openssl, header_map::HeaderMap, CoseSign1};
-use crc::{crc32, Hasher32};
+use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::asn1::Asn1Time;
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
@@ -135,7 +135,7 @@ pub struct EifBuilder<T: Digest + Debug + Write + Clone> {
     /// Hash the signing certificate
     pub certificate_hasher: EifHasher<T>,
     hasher_template: T,
-    eif_crc: crc32::Digest,
+    eif_crc: u32,
 }
 
 impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
@@ -170,7 +170,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             certificate_hasher: EifHasher::new_without_cache(hasher.clone())
                 .expect("Could not create certificate hasher"),
             hasher_template: hasher,
-            eif_crc: crc32::Digest::new_with_initial(crc32::IEEE, 0),
+            eif_crc: 0,
         }
     }
 
@@ -331,19 +331,21 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             section_offsets: self.sections_offsets(),
             section_sizes: self.sections_sizes(),
             unused: 0,
-            eif_crc32: self.eif_crc.sum32(),
+            eif_crc32: self.eif_crc,
         }
     }
 
     /// Compute the crc for the whole enclave image, excluding the
     /// eif_crc32 field from the EIF header.
     pub fn compute_crc(&mut self) {
+        let crc_gen = Crc::<u32>::new(&CRC_32_ISO_HDLC);
+        let mut crc = crc_gen.digest();
         let eif_header = self.header();
         let eif_buffer = eif_header.to_be_bytes();
         // The last field of the EifHeader is the CRC itself, so we need
         // to exclude it from contributing to the CRC.
         let len_without_crc = eif_buffer.len() - size_of::<u32>();
-        self.eif_crc.write(&eif_buffer[..len_without_crc]);
+        crc.update(&eif_buffer[..len_without_crc]);
 
         let eif_section = EifSectionHeader {
             section_type: EifSectionType::EifSectionKernel,
@@ -352,7 +354,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         };
 
         let eif_buffer = eif_section.to_be_bytes();
-        self.eif_crc.write(&eif_buffer[..]);
+        crc.update(&eif_buffer[..]);
         let mut kernel_file = &self.kernel;
 
         kernel_file
@@ -363,7 +365,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             .read_to_end(&mut buffer)
             .expect("Failed to read kernel content");
 
-        self.eif_crc.write(&buffer[..]);
+        crc.update(&buffer[..]);
 
         let eif_section = EifSectionHeader {
             section_type: EifSectionType::EifSectionCmdline,
@@ -372,8 +374,8 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         };
 
         let eif_buffer = eif_section.to_be_bytes();
-        self.eif_crc.write(&eif_buffer[..]);
-        self.eif_crc.write(&self.cmdline[..]);
+        crc.update(&eif_buffer[..]);
+        crc.update(&self.cmdline[..]);
 
         let eif_section = EifSectionHeader {
             section_type: EifSectionType::EifSectionMetadata,
@@ -382,8 +384,8 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         };
 
         let eif_buffer = eif_section.to_be_bytes();
-        self.eif_crc.write(&eif_buffer[..]);
-        self.eif_crc.write(&self.metadata[..]);
+        crc.update(&eif_buffer[..]);
+        crc.update(&self.metadata[..]);
 
         for mut ramdisk in &self.ramdisks {
             let eif_section = EifSectionHeader {
@@ -393,7 +395,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             };
 
             let eif_buffer = eif_section.to_be_bytes();
-            self.eif_crc.write(&eif_buffer[..]);
+            crc.update(&eif_buffer[..]);
 
             ramdisk
                 .seek(SeekFrom::Start(0))
@@ -402,7 +404,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             ramdisk
                 .read_to_end(&mut buffer)
                 .expect("Failed to read kernel content");
-            self.eif_crc.write(&buffer[..]);
+            crc.update(&buffer[..]);
         }
 
         if let Some(signature) = &self.signature {
@@ -413,9 +415,11 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             };
 
             let eif_buffer = eif_section.to_be_bytes();
-            self.eif_crc.write(&eif_buffer[..]);
-            self.eif_crc.write(&signature[..]);
+            crc.update(&eif_buffer[..]);
+            crc.update(&signature[..]);
         }
+
+        self.eif_crc = crc.finalize();
     }
 
     pub fn write_header(&mut self, file: &mut File) {
