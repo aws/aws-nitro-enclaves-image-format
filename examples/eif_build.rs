@@ -307,7 +307,7 @@ pub fn build_eif(
 
     build.write_to(&mut output_file);
     let signed = build.is_signed();
-    println!("Output written into {}", output_path);
+    println!("Output file: {}", output_path);
     build.measure();
     let measurements = get_pcrs(
         &mut build.image_hasher,
@@ -318,5 +318,6 @@ pub fn build_eif(
         signed,
     )
     .expect("Failed to get boot measurements.");
-    println!("BootMeasurement: {:?}: {:?}", hasher, measurements);
+
+    println!("{}", serde_json::to_string_pretty(&measurements).unwrap());
 }
