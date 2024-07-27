@@ -377,7 +377,7 @@ mod tests {
         // so we get an invalid section to cause the error.
         bytes[1] = 6;
 
-        assert_eq!(EifSectionHeader::from_be_bytes(&bytes).is_err(), true);
+        assert!(EifSectionHeader::from_be_bytes(&bytes).is_err());
     }
 }
 

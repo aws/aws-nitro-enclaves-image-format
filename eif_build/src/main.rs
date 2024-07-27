@@ -265,7 +265,7 @@ fn main() {
                 .to_string()
         }),
         img_version: img_version.unwrap_or_else(|| "1.0".to_string()),
-        build_info: build_info,
+        build_info,
         docker_info: json!(null),
         custom_info: metadata,
     };
@@ -302,7 +302,7 @@ pub fn build_eif(
     let flags = match arch {
         "aarch64" => EIF_HDR_ARCH_ARM64,
         "x86_64" => 0,
-        _ => None.expect(format!("Invalid architecture {arch}").as_str()),
+        _ => panic!("Invalid architecture: {}", arch),
     };
 
     let mut build = EifBuilder::new(
