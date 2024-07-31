@@ -56,6 +56,55 @@ impl SignCertificateInfo {
     }
 }
 
+/// Used to parse the EIF file into discrete
+/// sections and their associated buffers
+pub struct EifSectionIterator {
+    eif_file: File,
+    curr_seek: u64,
+}
+
+impl EifSectionIterator {
+    pub fn new(mut eif_file: File) -> Self {
+        let start_pos = EifHeader::size() as u64;
+        eif_file.seek(SeekFrom::Start(start_pos)).expect("Failed to seek file");
+        EifSectionIterator {
+            eif_file,
+            curr_seek: start_pos,
+        }
+    }
+}
+
+impl Iterator for EifSectionIterator {
+    type Item = Result<(EifSectionHeader, Vec<u8>, Vec<u8>), String>; // Header, HeaderBuf, Buf
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut section_buf = vec![0u8; EifSectionHeader::size()];
+        if self.eif_file.read_exact(&mut section_buf).is_err() {
+            return None;
+        }
+
+        let section = match EifSectionHeader::from_be_bytes(&section_buf) {
+            Ok(sec) => sec,
+            Err(e) => return Some(Err(format!("Error extracting EIF section header: {:?}", e))),
+        };
+
+        let mut buf = vec![0u8; section.section_size as usize];
+        self.curr_seek += EifSectionHeader::size() as u64;
+        if self.eif_file.seek(SeekFrom::Start(self.curr_seek)).is_err() {
+            return Some(Err("Failed to seek after EIF header".to_string()));
+        }
+        if self.eif_file.read_exact(&mut buf).is_err() {
+            return Some(Err("Error while reading section from EIF".to_string()));
+        }
+        self.curr_seek += section.section_size as u64;
+        if self.eif_file.seek(SeekFrom::Start(self.curr_seek)).is_err() {
+            return Some(Err("Failed to seek after EIF section".to_string()));
+        }
+
+        Some(Ok((section, section_buf, buf)))
+    }
+}
+
 /// Used for providing EIF info when requested by
 /// 'describe-eif' or 'describe-enclaves' commands
 pub struct EifReader {
@@ -85,7 +134,6 @@ impl EifReader {
     pub fn from_eif(eif_path: String) -> Result<Self, String> {
         let crc_gen = Crc::<u32>::new(&CRC_32_ISO_HDLC);
         let mut eif_crc = crc_gen.digest();
-        let mut curr_seek = 0;
         let mut eif_file =
             File::open(eif_path).map_err(|e| format!("Failed to open the EIF file: {:?}", e))?;
 
@@ -101,12 +149,8 @@ impl EifReader {
 
         let header = EifHeader::from_be_bytes(&header_buf)
             .map_err(|e| format!("Error while parsing EIF header: {:?}", e))?;
-        curr_seek += EifHeader::size();
-        eif_file
-            .seek(SeekFrom::Start(curr_seek as u64))
-            .map_err(|e| format!("Failed to seek file from start: {:?}", e))?;
 
-        let mut section_buf = vec![0u8; EifSectionHeader::size()];
+        let iterator = EifSectionIterator::new(eif_file);
         let mut image_hasher = EifHasher::new_without_cache(Sha384::new())
             .map_err(|e| format!("Could not create image_hasher: {:?}", e))?;
         let mut bootstrap_hasher = EifHasher::new_without_cache(Sha384::new())
@@ -119,30 +163,11 @@ impl EifReader {
         let mut signature_section = None;
         let mut metadata = None;
 
-        // Read all section headers and treat by type
-        while eif_file
-            .read_exact(&mut section_buf)
-            .map_err(|e| format!("Error while reading EIF header: {:?}", e))
-            .is_ok()
-        {
-            let section = EifSectionHeader::from_be_bytes(&section_buf)
-                .map_err(|e| format!("Error extracting EIF section header: {:?}", e))?;
+        // Read all sections and treat by type
+        for section_result in iterator {
+            let (section, section_buf, buf) = section_result
+                .map_err(|e| e.to_string())?;
             eif_crc.update(&section_buf);
-
-            let mut buf = vec![0u8; section.section_size as usize];
-            curr_seek += EifSectionHeader::size();
-            eif_file
-                .seek(SeekFrom::Start(curr_seek as u64))
-                .map_err(|e| format!("Failed to seek after EIF header: {:?}", e))?;
-            eif_file
-                .read_exact(&mut buf)
-                .map_err(|e| format!("Error while reading kernel from EIF: {:?}", e))?;
-            eif_crc.update(&buf);
-
-            curr_seek += section.section_size as usize;
-            eif_file
-                .seek(SeekFrom::Start(curr_seek as u64))
-                .map_err(|e| format!("Failed to seek after EIF section: {:?}", e))?;
 
             match section.section_type {
                 EifSectionType::EifSectionKernel | EifSectionType::EifSectionCmdline => {
