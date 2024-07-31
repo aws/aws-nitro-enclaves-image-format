@@ -17,7 +17,7 @@ const UNKNOWN_IMG_STR: &str = "Unknown";
 pub fn generate_build_info(
     build_tool: &str,
     build_tool_version: &str,
-    img_config_path: &str,
+    img_config_path: impl AsRef<Path>,
     build_time_override: Option<DateTime<Utc>>,
 ) -> Result<EifBuildInfo, String> {
     let now = match build_time_override {
@@ -69,14 +69,14 @@ macro_rules! generate_build_info {
 }
 
 /// Read user-provided metadata from a file in a JSON format
-pub fn parse_custom_metadata(path: &str) -> Result<serde_json::Value, String> {
-    if !Path::new(&path).is_file() {
+pub fn parse_custom_metadata(path: impl AsRef<Path>) -> Result<serde_json::Value, String> {
+    if !path.as_ref().is_file() {
         return Err("Specified path is not a file".to_string());
     }
 
     // Check file size
-    let file_meta =
-        std::fs::metadata(path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    let file_meta = std::fs::metadata(path.as_ref())
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
     if file_meta.len() > MAX_META_FILE_SIZE {
         return Err(format!(
             "Metadata file size exceeded limit of {}B",
@@ -85,8 +85,8 @@ pub fn parse_custom_metadata(path: &str) -> Result<serde_json::Value, String> {
     }
 
     // Get json Value
-    let custom_file =
-        File::open(path).map_err(|e| format!("Failed to open custom metadata file: {}", e))?;
+    let custom_file = File::open(path.as_ref())
+        .map_err(|e| format!("Failed to open custom metadata file: {}", e))?;
     let json_value: serde_json::Value = serde_json::from_reader(custom_file)
         .map_err(|e| format!("Failed to deserialize json: {}", e))?;
 

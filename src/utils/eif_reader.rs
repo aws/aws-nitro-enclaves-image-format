@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
+use std::path::Path;
 
 /// The information about the signing certificate to be provided for a `describe-eif` request.
 #[derive(Clone, Serialize, Deserialize)]
@@ -82,7 +83,7 @@ impl EifReader {
     /// Reads EIF and extracts sections to be written in the hashers based
     /// on section type. Also writes sections in the eif_crc, excluding the
     /// CRC from the header
-    pub fn from_eif(eif_path: String) -> Result<Self, String> {
+    pub fn from_eif(eif_path: impl AsRef<Path>) -> Result<Self, String> {
         let crc_gen = Crc::<u32>::new(&CRC_32_ISO_HDLC);
         let mut eif_crc = crc_gen.digest();
         let mut curr_seek = 0;

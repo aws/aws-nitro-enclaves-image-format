@@ -12,7 +12,7 @@
 ///   --ramdisk  initramfs_x86.txt_part2.cpio.gz
 ///   --output   eif.bin
 ///
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use aws_nitro_enclaves_image_format::defs::{EifBuildInfo, EifIdentityInfo, EIF_HDR_ARCH_ARM64};
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
@@ -48,6 +48,7 @@ fn main() {
                 .long("kernel_config")
                 .value_name("FILE")
                 .help("Sets path to a bzImage.config/Image.config file for x86_64/aarch64 architecture")
+                .value_parser(clap::value_parser!(PathBuf))
                 .takes_value(true),
         )
         .arg(
@@ -80,12 +81,14 @@ fn main() {
             Arg::with_name("signing-certificate")
                 .long("signing-certificate")
                 .help("Specify the path to the signing certificate")
+                .value_parser(clap::value_parser!(PathBuf))
                 .takes_value(true),
         )
         .arg(
             Arg::with_name("private-key")
                 .long("private-key")
                 .help("Specify the path to the private-key")
+                .value_parser(clap::value_parser!(PathBuf))
                 .takes_value(true),
         )
         .arg(
@@ -104,6 +107,7 @@ fn main() {
             Arg::with_name("metadata")
                 .long("metadata")
                 .help("Path to JSON containing the custom metadata provided by the user.")
+                .value_parser(clap::value_parser!(PathBuf))
                 .takes_value(true),
         )
         .arg(
@@ -170,9 +174,9 @@ fn main() {
         .value_of("output")
         .expect("Output file should be provided");
 
-    let signing_certificate = matches.value_of("signing-certificate");
+    let signing_certificate = matches.get_one::<PathBuf>("signing-certificate");
 
-    let private_key = matches.value_of("private-key");
+    let private_key = matches.get_one::<PathBuf>("private-key");
 
     let sign_info = match (signing_certificate, private_key) {
         (None, None) => None,
@@ -184,11 +188,9 @@ fn main() {
 
     let img_name = matches.value_of("image_name").map(|val| val.to_string());
     let img_version = matches.value_of("image_name").map(|val| val.to_string());
-    let metadata_path = matches.value_of("metadata").map(|val| val.to_string());
+    let metadata_path = matches.get_one::<PathBuf>("metadata");
     let metadata = match metadata_path {
-        Some(ref path) => {
-            parse_custom_metadata(path).expect("Can not parse specified metadata file")
-        }
+        Some(path) => parse_custom_metadata(path).expect("Can not parse specified metadata file"),
         None => json!(null),
     };
 
@@ -215,7 +217,7 @@ fn main() {
             .to_string(),
     };
 
-    if let Some(kernel_config) = matches.get_one::<String>("kernel_config") {
+    if let Some(kernel_config) = matches.get_one::<PathBuf>("kernel_config") {
         build_info = generate_build_info!(kernel_config).expect("Can not generate build info");
     }
 
@@ -326,7 +328,7 @@ pub fn build_eif(
         &mut build.bootstrap_hasher,
         &mut build.customer_app_hasher,
         &mut build.certificate_hasher,
-        hasher.clone(),
+        hasher,
         signed,
     )
     .expect("Failed to get boot measurements.");
