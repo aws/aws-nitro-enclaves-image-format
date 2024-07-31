@@ -38,60 +38,45 @@ This package is mostly intended as a library. However, it also contains the `eif
 Enclave image format builder
 Builds an eif file
 
-USAGE:
-    eif_build [OPTIONS] --kernel <FILE> --cmdline <String> --output <FILE> --ramdisk <FILE>
+Usage: eif_build [OPTIONS] --cmdline <String> --kernel <FILE> --output <FILE> --ramdisk <FILE>
 
-OPTIONS:
-        --arch <(x86_64|aarch64)>
-            Sets image architecture [default: x86_64]
-
-        --build-time <build_time>
-            Overrides image build time. [default: 2024-07-09T17:16:38.424202433+00:00]
-
-        --build-tool <build_tool>
-            Image build tool name. [default: eif_build]
-
-        --build-tool-version <build_tool_version>
-            Overrides image build tool version. [default: 0.2.0]
-
-        --cmdline <String>
-            Sets the cmdline
-
-    -h, --help
-            Print help information
-
-        --img-kernel <img_kernel>
-            Overrides image Operating System kernel version. [default: "Unknown version"]
-
-        --img-os <img_os>
-            Overrides image Operating System name. [default: "Generic Linux"]
-
-        --kernel <FILE>
-            Sets path to a bzImage/Image file for x86_64/aarch64 architecture
-
-        --kernel_config <FILE>
-            Sets path to a bzImage.config/Image.config file for x86_64/aarch64 architecture
-
-        --metadata <metadata>
-            Path to JSON containing the custom metadata provided by the user.
-
-        --name <image_name>
-            Name for enclave image
-
-        --output <FILE>
-            Specify output file path
-
-        --private-key <private-key>
-            Specify the path to the private-key
-
-        --ramdisk <FILE>
-            Sets path to a ramdisk file representing a cpio.gz archive
-
-        --signing-certificate <signing-certificate>
-            Specify the path to the signing certificate
-
-        --version <image_version>
-            Version of the enclave image
+Options:
+      --arch <ARCH>
+          Sets image architecture [default: x86_64] [possible values: x86_64, aarch64]
+      --build-time <BUILD_TIME>
+          Overrides image build time [default: 2024-07-31T12:52:09.945907130+00:00]
+      --build-tool <BUILD_TOOL>
+          Image build tool name [default: eif_build]
+      --build-tool-version <BUILD_TOOL_VERSION>
+          Overrides image build tool version [default: 0.2.0]
+      --cmdline <String>
+          Sets the cmdline
+      --image-kernel <IMAGE_KERNEL>
+          Overrides image Operating System kernel version [default: "Unkown version"]
+      --image-name <IMAGE_NAME>
+          Name for enclave image
+      --image-os <IMAGE_OS>
+          Overrides image Operating System name [default: "Generic Linux"]
+      --image-version <IMAGE_VERSION>
+          Version of the enclave image
+      --kernel <FILE>
+          Sets path to a bzImage/Image file for x86_64/aarch64 architecture
+      --kernel-config <FILE>
+          Sets path to a bzImage.config/Image.config file for x86_64/aarch64 architecture
+      --metadata <METADATA>
+          Path to JSON containing the custom metadata provided by the user
+      --output <FILE>
+          Specify output file path
+      --ramdisk <FILE>
+          Sets path to a ramdisk file representing a cpio.gz archive
+      --signing-certificate <SIGNING_CERTIFICATE>
+          Specify the path to the signing certificate
+      --private-key <PRIVATE_KEY>
+          Specify the path to the private-key
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
 ## Enclave Image File (EIF) Specification
