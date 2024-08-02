@@ -11,10 +11,13 @@ keywords = ["Nitro", "Enclaves", "AWS", "EIF"]
 rust-version = "1.68"
 
 [dependencies]
+# local dependencies
 aws-nitro-enclaves-image-format = { path = ".." }
-sha2 = "0.9.5"
-serde = { version = ">=1.0", features = ["derive"] }
-serde_json = "1.0"
-clap = "3.2"
-chrono = { version = "0.4", default-features = false, features = ["clock"]}
 
+# workspace dependencies
+chrono.workspace     = true
+serde.workspace      = true
+serde_json.workspace = true
+sha2.workspace       = true
+
+clap = { version = "~4.2", features = ["derive"] }

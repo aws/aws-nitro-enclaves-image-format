@@ -45,7 +45,7 @@ pub struct SignEnclaveInfo {
 }
 
 impl SignEnclaveInfo {
-    pub fn new(cert_path: &str, key_path: &str) -> Result<Self, String> {
+    pub fn new(cert_path: impl AsRef<Path>, key_path: impl AsRef<Path>) -> Result<Self, String> {
         let mut certificate_file = File::open(cert_path)
             .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
         let mut signing_certificate = Vec::new();
@@ -141,7 +141,7 @@ pub struct EifBuilder<T: Digest + Debug + Write + Clone> {
 
 impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     pub fn new(
-        kernel_path: &Path,
+        kernel_path: impl AsRef<Path>,
         cmdline: String,
         sign_info: Option<SignEnclaveInfo>,
         hasher: T,
@@ -179,7 +179,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         self.sign_info.is_some()
     }
 
-    pub fn add_ramdisk(&mut self, ramdisk_path: &Path) {
+    pub fn add_ramdisk(&mut self, ramdisk_path: impl AsRef<Path>) {
         let ramdisk_file = File::open(ramdisk_path).expect("Invalid ramdisk path");
         self.ramdisks.push(ramdisk_file);
     }
@@ -647,7 +647,7 @@ impl PcrSignatureChecker {
 
     /// Reads EIF section headers and looks for a signature.
     /// Seek to the signature section, if present, and save the certificate and signature
-    pub fn from_eif(eif_path: &str) -> Result<Self, String> {
+    pub fn from_eif(eif_path: impl AsRef<Path>) -> Result<Self, String> {
         let mut signing_certificate = Vec::new();
         let mut signature = Vec::new();
 
