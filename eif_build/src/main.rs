@@ -1,18 +1,19 @@
 // Copyright 2019-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+//! Simple utility tool for building an EIF file.
+//!
+//! Example of usage:
+//!
+//!```sh
+//! cargo run -p eif_build --target-dir=~/vmm-build -- --kernel bzImage \
+//!   --cmdline "reboot=k initrd=0x2000000,3228672 root=/dev/ram0 panic=1 pci=off nomodules \
+//!              console=ttyS0 i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd" \
+//!   --ramdisk initramfs_x86.txt_part1.cpio.gz \
+//!   --ramdisk initramfs_x86.txt_part2.cpio.gz \
+//!   --output eif.bin
+//!```
 #![deny(warnings)]
-/// Simple utility tool for building an Eif file
-///  cargo run --example eif_build -- --help  should be self explanatory.
-/// Example of usage:
-/// cargo run --example eif_build --target-dir=~/vmm-build -- --kernel bzImage \
-///    --cmdline "reboot=k initrd=0x2000000,3228672 root=/dev/ram0 panic=1 pci=off nomodules \
-///               console=ttyS0 i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd"
-///   --ramdisk  initramfs_x86.txt_part1.cpio.gz
-///   --ramdisk  initramfs_x86.txt_part2.cpio.gz
-///   --output   eif.bin
-///
-use std::path::{Path, PathBuf};
 use aws_nitro_enclaves_image_format::defs::{EifBuildInfo, EifIdentityInfo, EIF_HDR_ARCH_ARM64};
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
@@ -24,6 +25,7 @@ use clap::{Args, Parser, ValueEnum};
 use serde_json::json;
 use sha2::{Digest, Sha384};
 use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Debug, ValueEnum)]
