@@ -18,17 +18,17 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - run: rustup install ${{ matrix.rust }}
-    - run: cargo +${{ matrix.rust }} build --verbose
-    - run: cargo +${{ matrix.rust }} test --verbose
+    - run: cargo +${{ matrix.rust }} build --workspace
+    - run: cargo +${{ matrix.rust }} test --workspace
   clippy:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - run: rustup component add clippy
-    - run: cargo clippy
+    - run: cargo clippy --workspace
   rustfmt:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - run: rustup component add rustfmt
-    - run: cargo fmt -- --check
+    - run: cargo fmt --all --check

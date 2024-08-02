@@ -24,10 +24,11 @@ use std::collections::BTreeMap;
 ///    - kernel_file
 ///    - cmdline string
 ///    - ramdisks files.
-///  TODO:
-///     - Unittests.
-///     - Add support to write default_mem & default_cpus, flags.
-///     - Various validity checks: E.g: kernel is a bzImage.
+///
+/// TODO:
+///    - Unittests.
+///    - Add support to write default_mem & default_cpus, flags.
+///    - Various validity checks: E.g: kernel is a bzImage.
 use std::ffi::CString;
 use std::fmt::Debug;
 use std::fs::File;

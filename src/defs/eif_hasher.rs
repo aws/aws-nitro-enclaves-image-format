@@ -151,13 +151,13 @@ mod tests {
     #[test]
     fn invalid_block_size() {
         let hasher = EifHasher::new(31, Sha256::new());
-        assert_eq!(hasher.is_err(), true);
+        assert!(hasher.is_err());
 
         let hasher = EifHasher::new(63, Sha512::new());
-        assert_eq!(hasher.is_err(), true);
+        assert!(hasher.is_err());
 
         let hasher = EifHasher::new(47, Sha384::new());
-        assert_eq!(hasher.is_err(), true)
+        assert!(hasher.is_err())
     }
 
     #[test]
