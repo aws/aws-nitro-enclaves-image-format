@@ -2,7 +2,7 @@
 
 [![status]][actions] [![version]][crates.io] [![docs]][docs.rs] ![msrv]
 
-[status]: https://img.shields.io/github/workflow/status/aws/aws-nitro-enclaves-image-format/Rust/main
+[status]: https://img.shields.io/github/actions/workflow/status/aws/aws-nitro-enclaves-image-format/ci.yml?branch=main
 [actions]: https://github.com/aws/aws-nitro-enclaves-image-format/actions?query=branch%3Amain
 [version]: https://img.shields.io/crates/v/aws-nitro-enclaves-image-format.svg
 [crates.io]: https://crates.io/crates/aws-nitro-enclaves-image-format
