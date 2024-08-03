@@ -16,9 +16,10 @@ use std::path::Path;
 
 use aws_nitro_enclaves_image_format::defs::{EifBuildInfo, EifIdentityInfo, EIF_HDR_ARCH_ARM64};
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
+use aws_nitro_enclaves_image_format::utils::{PcrSigner, PrivateKeyPcrSigner, SignaturePcrSigner};
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
-    utils::{get_pcrs, EifBuilder, SignEnclaveInfo},
+    utils::{get_pcrs, EifBuilder},
 };
 use chrono::offset::Utc;
 use clap::{App, Arg, ValueSource};
@@ -174,12 +175,22 @@ fn main() {
 
     let private_key = matches.value_of("private-key");
 
-    let sign_info = match (signing_certificate, private_key) {
-        (None, None) => None,
-        (Some(cert_path), Some(key_path)) => {
-            Some(SignEnclaveInfo::new(cert_path, key_path).expect("Could not read signing info"))
+    let signature = matches.value_of("signature");
+
+    let sign_info: Option<Box<dyn PcrSigner>> = match (signing_certificate, private_key, signature)
+    {
+        (None, None, None) => None,
+        (Some(cert_path), Some(key_path), None) => Some(Box::new(
+            PrivateKeyPcrSigner::new(cert_path, key_path)
+                .expect("Could not read certificate and private key"),
+        )),
+        (Some(cert_path), None, Some(sig_path)) => Some(Box::new(
+            SignaturePcrSigner::new(cert_path, sig_path)
+                .expect("Could not read certificate and signature"),
+        )),
+        _ => {
+            panic!("Both signing-certificate and private-key/signature parameters must be provided")
         }
-        _ => panic!("Both signing-certificate and private-key parameters must be provided"),
     };
 
     let img_name = matches.value_of("image_name").map(|val| val.to_string());
@@ -286,7 +297,7 @@ pub fn build_eif(
     cmdline: &str,
     ramdisks: Vec<&str>,
     output_path: &str,
-    sign_info: Option<SignEnclaveInfo>,
+    sign_info: Option<Box<dyn PcrSigner>>,
     eif_info: EifIdentityInfo,
     arch: &str,
 ) {
