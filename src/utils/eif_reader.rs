@@ -3,7 +3,8 @@
 
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
-    EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
+    EifHeader, EifIdentityInfo, EifSectionType, EifSectionHeader, EifSection, PcrInfo,
+    PcrSignature,
 };
 use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{Crc, CRC_32_ISO_HDLC};
@@ -58,50 +59,71 @@ impl SignCertificateInfo {
 
 /// Used to parse the EIF file into discrete
 /// sections and their associated buffers
-pub struct EifSectionIterator {
+pub struct Sections {
     eif_file: File,
-    curr_seek: u64,
+    header: EifHeader,
+    curr_section: usize,
 }
 
-impl EifSectionIterator {
-    pub fn new(mut eif_file: File) -> Self {
-        let start_pos = EifHeader::size() as u64;
-        eif_file.seek(SeekFrom::Start(start_pos)).expect("Failed to seek file");
-        EifSectionIterator {
+impl Sections {
+    pub fn new(mut eif_file: File) -> Result<Self, String> {
+        eif_file
+            .rewind()
+            .map_err(|e| format!("Failed to rewind EIF file: {:?}", e))?;
+
+        let mut header_buf = vec![0u8; EifHeader::size()];
+        eif_file
+            .read_exact(&mut header_buf)
+            .map_err(|e| format!("Error while reading EIF header: {:?}", e))?;
+
+        let header = EifHeader::from_be_bytes(&header_buf)
+            .map_err(|e| format!("Error while parsing EIF header: {:?}", e))?;
+
+        Ok(Sections {
             eif_file,
-            curr_seek: start_pos,
-        }
+            header,
+            curr_section: 0,
+        })
     }
 }
 
-impl Iterator for EifSectionIterator {
-    type Item = Result<(EifSectionHeader, Vec<u8>, Vec<u8>), String>; // Header, HeaderBuf, Buf
+impl Iterator for Sections {
+    type Item = Result<EifSection, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut section_buf = vec![0u8; EifSectionHeader::size()];
-        if self.eif_file.read_exact(&mut section_buf).is_err() {
+        if self.curr_section >= self.header.num_sections.into() {
             return None;
         }
 
-        let section = match EifSectionHeader::from_be_bytes(&section_buf) {
+        let section_offset = self.header.section_offsets[self.curr_section];
+        let section_size = self.header.section_sizes[self.curr_section] as usize;
+        self.curr_section += 1;
+
+        let mut section_buf = vec![0u8; EifSectionHeader::size()];
+        if self.eif_file.seek(SeekFrom::Start(section_offset)).is_err() {
+            return Some(Err("Failed to seek to section offset".to_string()));
+        }
+        if self.eif_file.read_exact(&mut section_buf).is_err() {
+            return Some(Err("Error while reading EIF section header".to_string()));
+        }
+
+        let header = match EifSectionHeader::from_be_bytes(&section_buf) {
             Ok(sec) => sec,
             Err(e) => return Some(Err(format!("Error extracting EIF section header: {:?}", e))),
         };
 
-        let mut buf = vec![0u8; section.section_size as usize];
-        self.curr_seek += EifSectionHeader::size() as u64;
-        if self.eif_file.seek(SeekFrom::Start(self.curr_seek)).is_err() {
+        let mut data = vec![0u8; section_size];
+        if self.eif_file.seek(SeekFrom::Start(section_offset + EifSectionHeader::size() as u64)).is_err() {
             return Some(Err("Failed to seek after EIF header".to_string()));
         }
-        if self.eif_file.read_exact(&mut buf).is_err() {
+        if self.eif_file.read_exact(&mut data).is_err() {
             return Some(Err("Error while reading section from EIF".to_string()));
         }
-        self.curr_seek += section.section_size as u64;
-        if self.eif_file.seek(SeekFrom::Start(self.curr_seek)).is_err() {
-            return Some(Err("Failed to seek after EIF section".to_string()));
-        }
 
-        Some(Ok((section, section_buf, buf)))
+        Some(Ok(EifSection {
+            header,
+            data,
+        }))
     }
 }
 
@@ -150,7 +172,7 @@ impl EifReader {
         let header = EifHeader::from_be_bytes(&header_buf)
             .map_err(|e| format!("Error while parsing EIF header: {:?}", e))?;
 
-        let iterator = EifSectionIterator::new(eif_file);
+        let sections = Sections::new(eif_file)?;
         let mut image_hasher = EifHasher::new_without_cache(Sha384::new())
             .map_err(|e| format!("Could not create image_hasher: {:?}", e))?;
         let mut bootstrap_hasher = EifHasher::new_without_cache(Sha384::new())
@@ -164,42 +186,42 @@ impl EifReader {
         let mut metadata = None;
 
         // Read all sections and treat by type
-        for section_result in iterator {
-            let (section, section_buf, buf) = section_result
-                .map_err(|e| e.to_string())?;
-            eif_crc.update(&section_buf);
+        for section in sections {
+            let section = section.map_err(|e| e.to_string())?;
+            eif_crc.update(&section.header.to_be_bytes());
+            eif_crc.update(&section.data);
 
-            match section.section_type {
+            match section.header.section_type {
                 EifSectionType::EifSectionKernel | EifSectionType::EifSectionCmdline => {
-                    image_hasher.write_all(&buf).map_err(|e| {
+                    image_hasher.write_all(&section.data).map_err(|e| {
                         format!("Failed to write EIF section to image_hasher: {:?}", e)
                     })?;
-                    bootstrap_hasher.write_all(&buf).map_err(|e| {
+                    bootstrap_hasher.write_all(&section.data).map_err(|e| {
                         format!("Failed to write EIF section to bootstrap_hasher: {:?}", e)
                     })?;
                 }
                 EifSectionType::EifSectionRamdisk => {
-                    image_hasher.write_all(&buf).map_err(|e| {
+                    image_hasher.write_all(&section.data).map_err(|e| {
                         format!("Failed to write ramdisk section to image_hasher: {:?}", e)
                     })?;
                     if ramdisk_idx == 0 {
-                        bootstrap_hasher.write_all(&buf).map_err(|e| {
+                        bootstrap_hasher.write_all(&section.data).map_err(|e| {
                             format!(
                                 "Failed to write ramdisk section to bootstrap_hasher: {:?}",
                                 e
                             )
                         })?;
                     } else {
-                        app_hasher.write_all(&buf).map_err(|e| {
+                        app_hasher.write_all(&section.data).map_err(|e| {
                             format!("Failed to write ramdisk section to app_hasher: {:?}", e)
                         })?;
                     }
                     ramdisk_idx += 1;
                 }
                 EifSectionType::EifSectionSignature => {
-                    signature_section = Some(buf.clone());
+                    signature_section = Some(section.data.clone());
                     // Deserialize PCR0 signature structure and write it to the hasher
-                    let des_sign: Vec<PcrSignature> = from_slice(&buf[..])
+                    let des_sign: Vec<PcrSignature> = from_slice(&section.data[..])
                         .map_err(|e| format!("Error deserializing certificate: {:?}", e))?;
 
                     let cert = openssl::x509::X509::from_pem(&des_sign[0].signing_certificate)
@@ -212,7 +234,7 @@ impl EifReader {
                     })?;
                 }
                 EifSectionType::EifSectionMetadata => {
-                    metadata = serde_json::from_slice(&buf[..])
+                    metadata = serde_json::from_slice(&section.data[..])
                         .map_err(|e| format!("Error deserializing metadata: {:?}", e))?;
                 }
                 EifSectionType::EifSectionInvalid => {

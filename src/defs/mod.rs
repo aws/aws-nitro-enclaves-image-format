@@ -222,6 +222,14 @@ impl EifSectionHeader {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct EifSection {
+    /// The header of the EIF section
+    pub header: EifSectionHeader,
+    /// Buffer containing the section data
+    pub data: Vec<u8>,
+}
+
 /// Array containing the signatures of at least one PCR.
 /// For now, it only contains the signature of PRC0.
 pub type EifSignature = Vec<PcrSignature>;
