@@ -22,17 +22,21 @@ This project is licensed under the Apache-2.0 License.
 
 ## Building
 
-To compile the `eif_build` tool, run
+To compile the tools, run
 
 ```sh
 $ cargo build --all --release
 ```
 
-The resulting binary will be under `./target/release/eif_build`.
+The resulting binaries will be at `./target/release/eif_build`, `./target/release/eif_extract`
 
 ## Usage
 
-This package is mostly intended as a library. However, it also contains the `eif_build` tool which you can use to create AWS Nitro Enclave image files:
+This package is mostly intended as a library. However, it also contains the `eif_build` and `eif_extract` tools
+
+### eif_build
+
+You can use the `eif_build` tool to create AWS Nitro Enclave image files:
 
 ```plain
 Enclave image format builder
@@ -92,6 +96,73 @@ OPTIONS:
 
         --version <image_version>
             Version of the enclave image
+```
+
+### eif_extract
+
+You can use the `eif_extract` tool to extract artifacts (e.g. for scanning) from an AWS Nitro Enclave image file:
+
+```plain
+Enclave image format extractor
+Extracts sections from an eif file
+
+USAGE:
+    eif_extract <EIF_PATH> <OUTPUT_DIR> <PREFIX>
+
+DESCRIPTION:
+    <EIF_PATH>
+            Sets the input EIF file path
+
+    <OUTPUT_DIR>
+            Sets the output directory for extracted sections
+
+    <PREFIX>
+            Prefix for the extracted file names
+```
+
+The `eif_extract` tool reads the specified EIF file and extracts all `EifSectionRamdisk` sections, saving them to the specified output directory. The prefix can be used to add a custom prefix to the extracted file names.
+
+This can be used for example to extract the filesystem of the docker image the EIF was built with:
+```bash
+#!/bin/bash
+
+# Ensure script is executed with two arguments
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <eif-file> <tar-output-file>"
+    exit 1
+fi
+
+# Assign arguments to variables
+EIF_FILE=$1
+TAR_OUTPUT=$2
+TEMP_DIR=$(mktemp -d)
+PREFIX="ramdisk"
+
+# Extract sections from the EIF file
+eif_extract "$EIF_FILE" "$TEMP_DIR" "$PREFIX"
+
+# Find the second file created (assumed to be the CPIO file)
+CPIO_FILE=$(find "$TEMP_DIR" -type f -name "${PREFIX}1.dat")
+
+# Check if CPIO file exists
+if [ -z "$CPIO_FILE" ]; then
+    echo "Error: CPIO file not found."
+    exit 1
+fi
+
+# Create a temporary directory for extracting CPIO contents
+EXTRACT_DIR=$(mktemp -d)
+
+# Extract CPIO file contents
+cat "$CPIO_FILE" | (cd "$EXTRACT_DIR" && cpio -idmv)
+
+# Create a TAR file from the extracted contents
+tar -cvf "$TAR_OUTPUT" -C "$EXTRACT_DIR" .
+
+# Clean up temporary directories
+rm -rf "$TEMP_DIR" "$EXTRACT_DIR"
+
+echo "Conversion complete. TAR file created at $TAR_OUTPUT"
 ```
 
 ## Enclave Image File (EIF) Specification

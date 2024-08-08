@@ -29,4 +29,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock"]}
 members = [
     ".",  # aws-nitro-enclaves-image-format
     "eif_build",  # The eif_build CLI tool
+    "eif_extract",  # The eif_extract CLI tool
 ]
