@@ -38,13 +38,17 @@ use std::path::Path;
 
 const DEFAULT_SECTIONS_COUNT: u16 = 3;
 
-#[derive(Clone, Debug)]
-pub struct SignEnclaveInfo {
-    pub signing_certificate: Vec<u8>,
-    pub private_key: Vec<u8>,
+pub trait PcrSigner {
+    fn get_signing_certificate(&self) -> &[u8];
+    fn sign(&self, pcr_info: &PcrInfo) -> Result<Vec<u8>, String>;
 }
 
-impl SignEnclaveInfo {
+pub struct PrivateKeyPcrSigner {
+    signing_certificate: Vec<u8>,
+    pcr_cose_sign1: PcrCoseSign1,
+}
+
+impl PrivateKeyPcrSigner {
     pub fn new(cert_path: &str, key_path: &str) -> Result<Self, String> {
         let mut certificate_file = File::open(cert_path)
             .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
@@ -53,17 +57,125 @@ impl SignEnclaveInfo {
             .read_to_end(&mut signing_certificate)
             .map_err(|err| format!("Could not read the certificate file: {:?}", err))?;
 
+        let pcr_cose_sign1 = PcrCoseSign1::new(key_path)?;
+        Ok(Self {
+            signing_certificate,
+            pcr_cose_sign1,
+        })
+    }
+}
+
+impl PcrSigner for PrivateKeyPcrSigner {
+    fn get_signing_certificate(&self) -> &[u8] {
+        &self.signing_certificate
+    }
+
+    fn sign(&self, pcr_info: &PcrInfo) -> Result<Vec<u8>, String> {
+        self.pcr_cose_sign1.generate_signature(pcr_info)
+    }
+}
+
+pub struct SignaturePcrSigner {
+    signing_certificate: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+impl SignaturePcrSigner {
+    pub fn new(cert_path: &str, sig_path: &str) -> Result<Self, String> {
+        let mut sig_file = File::open(sig_path)
+            .map_err(|err| format!("Could not open the signature file: {:?}", err))?;
+        let mut sig_hex = String::new();
+        sig_file
+            .read_to_string(&mut sig_hex)
+            .map_err(|err| format!("Could not read the signature file: {:?}", err))?;
+        let signature = hex::decode(sig_hex.trim())
+            .map_err(|err| format!("Could not decode signature: {:?}", err))?;
+
+        let mut certificate_file = File::open(cert_path)
+            .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
+        let mut signing_certificate = Vec::new();
+        certificate_file
+            .read_to_end(&mut signing_certificate)
+            .map_err(|err| format!("Could not read the certificate file: {:?}", err))?;
+
+        Ok(Self {
+            signing_certificate,
+            signature,
+        })
+    }
+}
+
+impl PcrSigner for SignaturePcrSigner {
+    fn get_signing_certificate(&self) -> &[u8] {
+        &self.signing_certificate
+    }
+
+    fn sign(&self, pcr_info: &PcrInfo) -> Result<Vec<u8>, String> {
+        let expected =
+            to_vec(&pcr_info).map_err(|err| format!("Could not serialize PCR info: {:?}", err))?;
+
+        let signature = CoseSign1::from_bytes(&self.signature[..])
+            .map_err(|err| format!("Could not deserialize the signature: {:?}", err))?;
+        let cert = openssl::x509::X509::from_pem(&self.signing_certificate[..])
+            .map_err(|_| "Could not deserialize the signing certificate".to_string())?;
+        let public_key = cert
+            .public_key()
+            .map_err(|_| "Could not get the public key from the signing certificate".to_string())?;
+
+        let payload = signature
+            .get_payload::<Openssl>(Some(public_key.as_ref()))
+            .map_err(|_| "Could not get the payload from the signature".to_string())?;
+
+        if payload.eq(&expected) {
+            Ok(self.signature.clone())
+        } else {
+            Err("Signature does not match the PCR info".to_string())
+        }
+    }
+}
+
+pub struct PcrCoseSign1 {
+    private_key: Vec<u8>,
+}
+
+impl PcrCoseSign1 {
+    pub fn new(key_path: &str) -> Result<Self, String> {
         let mut key_file = File::open(key_path)
             .map_err(|err| format!("Could not open the key file: {:?}", err))?;
         let mut private_key = Vec::new();
         key_file
             .read_to_end(&mut private_key)
             .map_err(|err| format!("Could not read the key file: {:?}", err))?;
+        Ok(Self { private_key })
+    }
 
-        Ok(SignEnclaveInfo {
-            signing_certificate,
-            private_key,
-        })
+    pub fn generate_signature(&self, pcr_info: &PcrInfo) -> Result<Vec<u8>, String> {
+        let payload =
+            to_vec(&pcr_info).map_err(|err| format!("Could not serialize PCR info: {:?}", err))?;
+
+        let private_key = PKey::private_key_from_pem(&self.private_key)
+            .expect("Could not deserialize the PEM-formatted private key");
+
+        let signature =
+            CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
+                .unwrap()
+                .as_bytes(false)
+                .unwrap();
+
+        Ok(signature)
+    }
+
+    pub fn write_signature(
+        &self,
+        pcr_info: &PcrInfo,
+        output_file: &mut File,
+    ) -> Result<(), String> {
+        let signature = self.generate_signature(pcr_info)?;
+        let sig_hex = hex::encode(&signature);
+        output_file
+            .write_all(sig_hex.as_bytes())
+            .map_err(|err| format!("Could not write signature to file: {err:?}"))?;
+        Ok(())
     }
 }
 
@@ -119,7 +231,7 @@ pub struct EifBuilder<T: Digest + Debug + Write + Clone> {
     kernel: File,
     cmdline: Vec<u8>,
     ramdisks: Vec<File>,
-    sign_info: Option<SignEnclaveInfo>,
+    sign_info: Option<Box<dyn PcrSigner>>,
     signature: Option<Vec<u8>>,
     signature_size: u64,
     metadata: Vec<u8>,
@@ -143,7 +255,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     pub fn new(
         kernel_path: &Path,
         cmdline: String,
-        sign_info: Option<SignEnclaveInfo>,
+        sign_info: Option<Box<dyn PcrSigner>>,
         hasher: T,
         flags: u16,
         eif_info: EifIdentityInfo,
@@ -287,18 +399,9 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         register_value: Vec<u8>,
     ) -> PcrSignature {
         let sign_info = self.sign_info.as_ref().unwrap();
-        let signing_certificate = sign_info.signing_certificate.clone();
+        let signing_certificate = sign_info.get_signing_certificate().to_vec();
         let pcr_info = PcrInfo::new(register_index, register_value);
-
-        let payload = to_vec(&pcr_info).expect("Could not serialize PCR info");
-        let private_key = PKey::private_key_from_pem(&sign_info.private_key)
-            .expect("Could not deserialize the PEM-formatted private key");
-
-        let signature =
-            CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
-                .unwrap()
-                .as_bytes(false)
-                .unwrap();
+        let signature = sign_info.sign(&pcr_info).expect("Could not sign the PCR");
 
         PcrSignature {
             signing_certificate,
@@ -585,6 +688,19 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         measurements
     }
 
+    pub fn get_measurements(&mut self) -> BTreeMap<String, String> {
+        self.measure();
+        get_pcrs(
+            &mut self.image_hasher,
+            &mut self.bootstrap_hasher,
+            &mut self.customer_app_hasher,
+            &mut self.certificate_hasher,
+            self.hasher_template.clone(),
+            self.sign_info.is_some(),
+        )
+        .expect("Failed to get measurements")
+    }
+
     pub fn measure(&mut self) {
         let mut kernel_file = &self.kernel;
         kernel_file
@@ -619,7 +735,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         }
 
         if let Some(sign_info) = self.sign_info.as_ref() {
-            let cert = openssl::x509::X509::from_pem(&sign_info.signing_certificate[..]).unwrap();
+            let cert = openssl::x509::X509::from_pem(&sign_info.get_signing_certificate()).unwrap();
             let cert_der = cert.to_der().unwrap();
             // This is equivalent to extend(cert.digest(sha384)), since hasher is going to
             // hash the DER certificate (cert.digest()) and then tpm_extend_finalize_reset
