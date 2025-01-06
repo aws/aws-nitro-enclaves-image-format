@@ -1,4 +1,4 @@
-// Copyright 2019-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright 2019-2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![deny(warnings)]
 pub mod eif_reader;
@@ -9,7 +9,12 @@ use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature, EIF_MAGIC,
     MAX_NUM_SECTIONS,
 };
-use aws_nitro_enclaves_cose::{crypto::Openssl, header_map::HeaderMap, CoseSign1};
+use aws_config::BehaviorVersion;
+use aws_nitro_enclaves_cose::{
+    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap, CoseSign1,
+};
+use aws_sdk_kms::client::Client;
+use aws_types::region::Region;
 use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::asn1::Asn1Time;
 use openssl::pkey::PKey;
@@ -35,35 +40,98 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
 use std::path::Path;
+use tokio::runtime::Runtime;
 
 const DEFAULT_SECTIONS_COUNT: u16 = 3;
 
-#[derive(Clone, Debug)]
-pub struct SignEnclaveInfo {
-    pub signing_certificate: Vec<u8>,
-    pub private_key: Vec<u8>,
+// Signing key for eif images
+pub enum SignKey {
+    // Local private key
+    LocalPrivateKey(Vec<u8>),
+
+    // KMS signer implementation from Cose library
+    KmsKey(KmsKey),
 }
 
-impl SignEnclaveInfo {
-    pub fn new(cert_path: &str, key_path: &str) -> Result<Self, String> {
-        let mut certificate_file = File::open(cert_path)
+// Full signining key data
+pub struct SignKeyData {
+    // x509 certificate
+    pub cert: Vec<u8>,
+
+    // Signing key itself
+    pub key: SignKey,
+}
+
+// Signing key details
+#[derive(Clone, Debug)]
+pub enum SignKeyInfo {
+    // Local private key file path
+    LocalPrivateKeyInfo { path: String },
+
+    // KMS key details
+    KmsKeyInfo { id: String, region: Option<String> },
+}
+
+// Full details of signing key
+#[derive(Clone, Debug)]
+pub struct SignKeyDataInfo {
+    // Path to the certificate file
+    pub cert_path: String,
+
+    // Details of signing key itself
+    pub key_info: SignKeyInfo,
+}
+
+impl SignKeyData {
+    pub fn new(sign_info: &SignKeyDataInfo) -> Result<Self, String> {
+        let mut cert_file = File::open(&sign_info.cert_path)
             .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
-        let mut signing_certificate = Vec::new();
-        certificate_file
-            .read_to_end(&mut signing_certificate)
+        let mut cert = Vec::new();
+        cert_file
+            .read_to_end(&mut cert)
             .map_err(|err| format!("Could not read the certificate file: {:?}", err))?;
 
-        let mut key_file = File::open(key_path)
-            .map_err(|err| format!("Could not open the key file: {:?}", err))?;
-        let mut private_key = Vec::new();
-        key_file
-            .read_to_end(&mut private_key)
-            .map_err(|err| format!("Could not read the key file: {:?}", err))?;
+        let key = match &sign_info.key_info {
+            SignKeyInfo::LocalPrivateKeyInfo { path } => {
+                let mut key_file = File::open(path)
+                    .map_err(|err| format!("Could not open the key file: {:?}", err))?;
+                let mut key_data = Vec::new();
+                key_file
+                    .read_to_end(&mut key_data)
+                    .map_err(|err| format!("Could not read the key file: {:?}", err))?;
 
-        Ok(SignEnclaveInfo {
-            signing_certificate,
-            private_key,
-        })
+                SignKey::LocalPrivateKey(key_data)
+            }
+            SignKeyInfo::KmsKeyInfo { id, region } => {
+                // Method `KmsKey::new_with_public_key` must be called from a thread being run
+                // by Tokio runtime, or from a thread with an active `EnterGuard`.
+                let act = async {
+                    let mut config_loader = aws_config::defaults(BehaviorVersion::latest());
+                    if let Some(region_id) = region {
+                        config_loader = config_loader.region(Region::new(region_id.clone()));
+                    }
+
+                    let sdk_config = config_loader.load().await;
+                    if sdk_config.region().is_none() {
+                        return Err("AWS region for KMS is not specified".to_string());
+                    }
+
+                    let id_copy = id.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let client = Client::new(&sdk_config);
+                        KmsKey::new_with_public_key(client, id_copy, None)
+                            .map_err(|e| e.to_string())
+                    })
+                    .await
+                    .unwrap()
+                };
+                let runtime = Runtime::new().unwrap();
+                let key = runtime.block_on(act)?;
+                SignKey::KmsKey(key)
+            }
+        };
+
+        Ok(SignKeyData { cert, key })
     }
 }
 
@@ -119,7 +187,7 @@ pub struct EifBuilder<T: Digest + Debug + Write + Clone> {
     kernel: File,
     cmdline: Vec<u8>,
     ramdisks: Vec<File>,
-    sign_info: Option<SignEnclaveInfo>,
+    sign_info: Option<SignKeyData>,
     signature: Option<Vec<u8>>,
     signature_size: u64,
     metadata: Vec<u8>,
@@ -143,7 +211,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     pub fn new(
         kernel_path: &Path,
         cmdline: String,
-        sign_info: Option<SignEnclaveInfo>,
+        sign_info: Option<SignKeyData>,
         hasher: T,
         flags: u16,
         eif_info: EifIdentityInfo,
@@ -286,23 +354,27 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         register_index: i32,
         register_value: Vec<u8>,
     ) -> PcrSignature {
-        let sign_info = self.sign_info.as_ref().unwrap();
-        let signing_certificate = sign_info.signing_certificate.clone();
+        let sign_info = self
+            .sign_info
+            .as_ref()
+            .expect("Signing key is expected to be provided");
         let pcr_info = PcrInfo::new(register_index, register_value);
 
         let payload = to_vec(&pcr_info).expect("Could not serialize PCR info");
-        let private_key = PKey::private_key_from_pem(&sign_info.private_key)
-            .expect("Could not deserialize the PEM-formatted private key");
 
-        let signature =
-            CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), private_key.as_ref())
-                .unwrap()
-                .as_bytes(false)
-                .unwrap();
+        let cose_sign = match &sign_info.key {
+            SignKey::LocalPrivateKey(key) => {
+                let pkey = PKey::private_key_from_pem(key)
+                    .expect("Could not deserialize the PEM-formatted private key");
+
+                CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), &pkey)
+            }
+            SignKey::KmsKey(key) => CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), key),
+        };
 
         PcrSignature {
-            signing_certificate,
-            signature,
+            signing_certificate: sign_info.cert.clone(),
+            signature: cose_sign.unwrap().as_bytes(false).unwrap(),
         }
     }
 
@@ -619,7 +691,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         }
 
         if let Some(sign_info) = self.sign_info.as_ref() {
-            let cert = openssl::x509::X509::from_pem(&sign_info.signing_certificate[..]).unwrap();
+            let cert = openssl::x509::X509::from_pem(&sign_info.cert[..]).unwrap();
             let cert_der = cert.to_der().unwrap();
             // This is equivalent to extend(cert.digest(sha384)), since hasher is going to
             // hash the DER certificate (cert.digest()) and then tpm_extend_finalize_reset
