@@ -125,7 +125,7 @@ impl SignKeyData {
                     .await
                     .unwrap()
                 };
-                let runtime = Runtime::new().unwrap();
+                let runtime = Runtime::new().map_err(|e| e.to_string())?;
                 let key = runtime.block_on(act)?;
                 SignKey::KmsKey(key)
             }
