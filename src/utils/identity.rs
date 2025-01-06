@@ -9,7 +9,6 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// Utilities and helpers to fill EIF identity information
-
 const MAX_META_FILE_SIZE: u64 = 4096;
 const UNKNOWN_IMG_STR: &str = "Unknown";
 
