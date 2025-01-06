@@ -1,6 +1,6 @@
 [package]
 name = "aws-nitro-enclaves-image-format"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["The AWS Nitro Enclaves Team <aws-nitro-enclaves-devel@amazon.com>"]
 edition = "2018"
 license = "Apache-2.0"
@@ -8,7 +8,7 @@ description = "This library provides the definition of the enclave image format 
 repository = "https://github.com/aws/aws-nitro-enclaves-image-format"
 readme = "README.md"
 keywords = ["Nitro", "Enclaves", "AWS"]
-rust-version = "1.68"
+rust-version = "1.71"
 
 [dependencies]
 sha2 = "0.9.5"
