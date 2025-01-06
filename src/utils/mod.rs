@@ -66,7 +66,7 @@ pub struct SignKeyData {
 #[derive(Clone, Debug)]
 pub enum SignKeyInfo {
     // Local private key file path
-    LocalPrivateKeyInfo { path: String },
+    LocalPrivateKeyInfo { path: std::path::PathBuf },
 
     // KMS key details
     KmsKeyInfo { id: String, region: Option<String> },
@@ -76,7 +76,7 @@ pub enum SignKeyInfo {
 #[derive(Clone, Debug)]
 pub struct SignKeyDataInfo {
     // Path to the certificate file
-    pub cert_path: String,
+    pub cert_path: std::path::PathBuf,
 
     // Details of signing key itself
     pub key_info: SignKeyInfo,
@@ -841,9 +841,9 @@ mod tests {
         let cert_file_path = generate_certificate_file()?;
 
         let key_data = SignKeyData::new(&SignKeyDataInfo {
-            cert_path: cert_file_path.to_str().unwrap().to_string(),
+            cert_path: (&cert_file_path).into(),
             key_info: SignKeyInfo::LocalPrivateKeyInfo {
-                path: "/invalid/path".to_string(),
+                path: "/invalid/path".into(),
             },
         });
 
@@ -856,9 +856,9 @@ mod tests {
         let key_file_path = generate_pkey_file()?;
 
         let key_data = SignKeyData::new(&SignKeyDataInfo {
-            cert_path: "/invalid/path".to_string(),
+            cert_path: "/invalid/path".into(),
             key_info: SignKeyInfo::LocalPrivateKeyInfo {
-                path: key_file_path.to_str().unwrap().to_string(),
+                path: (&key_file_path).into(),
             },
         });
 
@@ -872,9 +872,9 @@ mod tests {
         let key_file_path = generate_pkey_file()?;
 
         let key_data = SignKeyData::new(&SignKeyDataInfo {
-            cert_path: cert_file_path.to_str().unwrap().to_string(),
+            cert_path: (&cert_file_path).into(),
             key_info: SignKeyInfo::LocalPrivateKeyInfo {
-                path: key_file_path.to_str().unwrap().to_string(),
+                path: (&key_file_path).into(),
             },
         })
         .unwrap();
@@ -900,7 +900,7 @@ mod tests {
             let key_region = env::var("AWS_KMS_TEST_KEY_REGION").ok();
 
             let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: "/invalid/path".to_string(),
+                cert_path: "/invalid/path".into(),
                 key_info: SignKeyInfo::KmsKeyInfo {
                     id: key_id,
                     region: key_region,
@@ -922,7 +922,7 @@ mod tests {
             env::remove_var("AWS_REGION");
 
             let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: cert_file_path.to_str().unwrap().to_string(),
+                cert_path: (&cert_file_path).into(),
                 key_info: SignKeyInfo::KmsKeyInfo {
                     id: key_id,
                     region: Some(key_region),
@@ -948,7 +948,7 @@ mod tests {
             env::set_var("AWS_REGION", key_region);
 
             let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: cert_file_path.to_str().unwrap().to_string(),
+                cert_path: (&cert_file_path).into(),
                 key_info: SignKeyInfo::KmsKeyInfo {
                     id: key_id,
                     region: None,
@@ -971,7 +971,7 @@ mod tests {
             env::remove_var("AWS_REGION");
 
             let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: cert_file_path.to_str().unwrap().to_string(),
+                cert_path: (&cert_file_path).into(),
                 key_info: SignKeyInfo::KmsKeyInfo {
                     id: key_id,
                     region: None,
