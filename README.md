@@ -8,7 +8,7 @@
 [crates.io]: https://crates.io/crates/aws-nitro-enclaves-image-format
 [docs]: https://img.shields.io/docsrs/aws-nitro-enclaves-image-format
 [docs.rs]: https://docs.rs/aws-nitro-enclaves-image-format
-[msrv]: https://img.shields.io/badge/MSRV-1.68.2-blue
+[msrv]: https://img.shields.io/badge/MSRV-1.71.1-blue
 
 This library provides the definition of the enclave image format (EIF) file.
 
