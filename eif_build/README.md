@@ -8,7 +8,7 @@
 [crates.io]: https://crates.io/crates/eif_build
 [docs]: https://img.shields.io/docsrs/eif_build
 [docs.rs]: https://docs.rs/eif_build
-[msrv]: https://img.shields.io/badge/MSRV-1.68.2-blue
+[msrv]: https://img.shields.io/badge/MSRV-1.71.1-blue
 
 This CLI tool provides a low level path to assemble an enclave image format (EIF) file used in AWS Nitro Enclaves.
 
