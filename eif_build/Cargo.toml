@@ -1,6 +1,6 @@
 [package]
 name = "eif_build"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["The AWS Nitro Enclaves Team <aws-nitro-enclaves-devel@amazon.com>"]
 edition = "2018"
 license = "Apache-2.0"
@@ -8,7 +8,7 @@ description = "This CLI tool provides a low level path to assemble an enclave im
 repository = "https://github.com/aws/aws-nitro-enclaves-image-format"
 readme = "README.md"
 keywords = ["Nitro", "Enclaves", "AWS", "EIF"]
-rust-version = "1.68"
+rust-version = "1.71"
 
 [dependencies]
 aws-nitro-enclaves-image-format = "0.4"
