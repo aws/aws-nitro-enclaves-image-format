@@ -40,6 +40,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 const DEFAULT_SECTIONS_COUNT: u16 = 3;
@@ -50,7 +51,7 @@ pub enum SignKey {
     LocalPrivateKey(Vec<u8>),
 
     // KMS signer implementation from Cose library
-    KmsKey(KmsKey),
+    KmsKey(Arc<KmsKey>),
 }
 
 // Full signining key data
@@ -127,7 +128,7 @@ impl SignKeyData {
                 };
                 let runtime = Runtime::new().map_err(|e| e.to_string())?;
                 let key = runtime.block_on(act)?;
-                SignKey::KmsKey(key)
+                SignKey::KmsKey(Arc::new(key))
             }
         };
 
@@ -359,7 +360,6 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             .as_ref()
             .expect("Signing key is expected to be provided");
         let pcr_info = PcrInfo::new(register_index, register_value);
-
         let payload = to_vec(&pcr_info).expect("Could not serialize PCR info");
 
         let cose_sign = match &sign_info.key {
@@ -367,14 +367,26 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
                 let pkey = PKey::private_key_from_pem(key)
                     .expect("Could not deserialize the PEM-formatted private key");
 
-                CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), &pkey)
+                CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), &pkey).unwrap()
             }
-            SignKey::KmsKey(key) => CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), key),
+            SignKey::KmsKey(key) => {
+                let arc_key = key.clone();
+                let act = async move {
+                    tokio::task::spawn_blocking(move || {
+                        CoseSign1::new::<Openssl>(payload.as_slice(), &HeaderMap::new(), &*arc_key)
+                            .unwrap()
+                    })
+                    .await
+                    .unwrap()
+                };
+                let runtime = Runtime::new().expect("Must be able to create a runtime");
+                runtime.block_on(act)
+            }
         };
 
         PcrSignature {
             signing_certificate: sign_info.cert.clone(),
-            signature: cose_sign.unwrap().as_bytes(false).unwrap(),
+            signature: cose_sign.as_bytes(false).unwrap(),
         }
     }
 
