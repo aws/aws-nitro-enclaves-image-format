@@ -23,7 +23,7 @@ use aws_nitro_enclaves_image_format::{
 use chrono::offset::Utc;
 use clap::{App, Arg, ArgGroup, ValueSource};
 use serde_json::json;
-use sha2::{Digest, Sha384};
+use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -181,6 +181,13 @@ fn main() {
                 .default_value(&img_kernel)
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("algo")
+                .long("algo")
+                .help("Sets algorithm to be used for measuring the image")
+                .possible_values(["sha256", "sha384", "sha512"])
+                .default_value("sha384")
+        )
         .get_matches();
 
     let arch = matches.value_of("arch").expect("default value");
@@ -324,19 +331,21 @@ fn main() {
         output_path,
         sign_info: sign_key_data,
         eif_info,
-        arch
+        arch,
     };
 
-    build_eif(
-        params,
-        Sha384::new(),
-    );
+    let algo = matches
+        .value_of("algo")
+        .expect("Clap must specify default value");
+    match algo {
+        "sha256" => build_eif(params, Sha256::new()),
+        "sha512" => build_eif(params, Sha512::new()),
+        "sha384" => build_eif(params, Sha384::new()),
+        _ => unreachable!("Clap guarantees that we get only the specified values"),
+    }
 }
 
-pub fn build_eif<T: Digest + Debug + Write + Clone>(
-    params: EifBuildParameters,
-    hasher: T
-) {
+pub fn build_eif<T: Digest + Debug + Write + Clone>(params: EifBuildParameters, hasher: T) {
     let mut output_file = OpenOptions::new()
         .read(true)
         .create(true)
