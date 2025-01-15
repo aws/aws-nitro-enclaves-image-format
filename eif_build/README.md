@@ -96,4 +96,7 @@ OPTIONS:
 
         --version <image_version>
             Version of the enclave image
+
+        --algo <(sha256|sha384|sha512)>
+            Sets algorithm to measure the image [default: sha384]
 ```
