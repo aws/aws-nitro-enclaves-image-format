@@ -29,6 +29,16 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use ValueSource::CommandLine;
 
+pub struct EifBuildParameters<'a> {
+    pub kernel_path: &'a str,
+    pub cmdline: &'a str,
+    pub ramdisks: Vec<&'a str>,
+    pub output_path: &'a str,
+    pub sign_info: Option<SignKeyData>,
+    pub eif_info: EifIdentityInfo,
+    pub arch: &'a str,
+}
+
 fn main() {
     let now = Utc::now().to_rfc3339();
     let build_tool = env!("CARGO_PKG_NAME").to_string();
@@ -307,58 +317,55 @@ fn main() {
         custom_info: metadata,
     };
 
-    build_eif(
+    let params = EifBuildParameters {
         kernel_path,
         cmdline,
         ramdisks,
         output_path,
-        sign_key_data,
-        Sha384::new(),
+        sign_info: sign_key_data,
         eif_info,
-        arch,
+        arch
+    };
+
+    build_eif(
+        params,
+        Sha384::new(),
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn build_eif<T: Digest + Debug + Write + Clone>(
-    kernel_path: &str,
-    cmdline: &str,
-    ramdisks: Vec<&str>,
-    output_path: &str,
-    sign_info: Option<SignKeyData>,
-    hasher: T,
-    eif_info: EifIdentityInfo,
-    arch: &str,
+    params: EifBuildParameters,
+    hasher: T
 ) {
     let mut output_file = OpenOptions::new()
         .read(true)
         .create(true)
         .write(true)
         .truncate(true)
-        .open(output_path)
+        .open(params.output_path)
         .expect("Could not create output file");
 
-    let flags = match arch {
+    let flags = match params.arch {
         "aarch64" => EIF_HDR_ARCH_ARM64,
         "x86_64" => 0,
-        _ => panic!("Invalid architecture: {}", arch),
+        _ => panic!("Invalid architecture: {}", params.arch),
     };
 
     let mut build = EifBuilder::new(
-        Path::new(kernel_path),
-        cmdline.to_string(),
-        sign_info,
+        Path::new(params.kernel_path),
+        params.cmdline.to_string(),
+        params.sign_info,
         hasher.clone(),
         flags, // flags
-        eif_info,
+        params.eif_info,
     );
-    for ramdisk in ramdisks {
+    for ramdisk in params.ramdisks {
         build.add_ramdisk(Path::new(ramdisk));
     }
 
     build.write_to(&mut output_file);
     let signed = build.is_signed();
-    println!("Output file: {}", output_path);
+    println!("Output file: {}", params.output_path);
     build.measure();
     let measurements = get_pcrs(
         &mut build.image_hasher,
