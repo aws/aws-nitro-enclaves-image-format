@@ -2,27 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 #![deny(warnings)]
 pub mod eif_reader;
+pub mod eif_signer;
 pub mod identity;
 
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
-    EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature, EIF_MAGIC,
+    EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrSignature, EIF_MAGIC,
     MAX_NUM_SECTIONS,
 };
-use aws_config::BehaviorVersion;
-use aws_nitro_enclaves_cose::{
-    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap, CoseSign1,
-};
-use aws_sdk_kms::client::Client;
-use aws_types::region::Region;
+use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::asn1::Asn1Time;
-use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
-use serde_cbor::{from_slice, to_vec};
+use serde_cbor::from_slice;
 use sha2::Digest;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+
+pub use eif_signer::{EifSigner, SignKeyData, SignKeyDataInfo, SignKeyInfo};
 
 /// Contains code for EifBuilder a simple library used for building an EifFile
 /// from a:
@@ -40,101 +37,8 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
 use std::path::Path;
-use std::sync::Arc;
-use tokio::runtime::Runtime;
 
 const DEFAULT_SECTIONS_COUNT: u16 = 3;
-
-// Signing key for eif images
-pub enum SignKey {
-    // Local private key
-    LocalPrivateKey(Vec<u8>),
-
-    // KMS signer implementation from Cose library
-    KmsKey(Arc<KmsKey>),
-}
-
-// Full signining key data
-pub struct SignKeyData {
-    // x509 certificate
-    pub cert: Vec<u8>,
-
-    // Signing key itself
-    pub key: SignKey,
-}
-
-// Signing key details
-#[derive(Clone, Debug)]
-pub enum SignKeyInfo {
-    // Local private key file path
-    LocalPrivateKeyInfo { path: std::path::PathBuf },
-
-    // KMS key details
-    KmsKeyInfo { id: String, region: Option<String> },
-}
-
-// Full details of signing key
-#[derive(Clone, Debug)]
-pub struct SignKeyDataInfo {
-    // Path to the certificate file
-    pub cert_path: std::path::PathBuf,
-
-    // Details of signing key itself
-    pub key_info: SignKeyInfo,
-}
-
-impl SignKeyData {
-    pub fn new(sign_info: &SignKeyDataInfo) -> Result<Self, String> {
-        let mut cert_file = File::open(&sign_info.cert_path)
-            .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
-        let mut cert = Vec::new();
-        cert_file
-            .read_to_end(&mut cert)
-            .map_err(|err| format!("Could not read the certificate file: {:?}", err))?;
-
-        let key = match &sign_info.key_info {
-            SignKeyInfo::LocalPrivateKeyInfo { path } => {
-                let mut key_file = File::open(path)
-                    .map_err(|err| format!("Could not open the key file: {:?}", err))?;
-                let mut key_data = Vec::new();
-                key_file
-                    .read_to_end(&mut key_data)
-                    .map_err(|err| format!("Could not read the key file: {:?}", err))?;
-
-                SignKey::LocalPrivateKey(key_data)
-            }
-            SignKeyInfo::KmsKeyInfo { id, region } => {
-                // Method `KmsKey::new_with_public_key` must be called from a thread being run
-                // by Tokio runtime, or from a thread with an active `EnterGuard`.
-                let act = async {
-                    let mut config_loader = aws_config::defaults(BehaviorVersion::latest());
-                    if let Some(region_id) = region {
-                        config_loader = config_loader.region(Region::new(region_id.clone()));
-                    }
-
-                    let sdk_config = config_loader.load().await;
-                    if sdk_config.region().is_none() {
-                        return Err("AWS region for KMS is not specified".to_string());
-                    }
-
-                    let id_copy = id.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let client = Client::new(&sdk_config);
-                        KmsKey::new_with_public_key(client, id_copy, None)
-                            .map_err(|e| e.to_string())
-                    })
-                    .await
-                    .unwrap()
-                };
-                let runtime = Runtime::new().map_err(|e| e.to_string())?;
-                let key = runtime.block_on(act)?;
-                SignKey::KmsKey(Arc::new(key))
-            }
-        };
-
-        Ok(SignKeyData { cert, key })
-    }
-}
 
 /// Utility function to calculate PCRs, used at build and describe.
 pub fn get_pcrs<T: Digest + Debug + Write + Clone>(
@@ -188,7 +92,7 @@ pub struct EifBuilder<T: Digest + Debug + Write + Clone> {
     kernel: File,
     cmdline: Vec<u8>,
     ramdisks: Vec<File>,
-    sign_info: Option<SignKeyData>,
+    signer: Option<EifSigner>,
     signature: Option<Vec<u8>>,
     signature_size: u64,
     metadata: Vec<u8>,
@@ -220,11 +124,12 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
         let kernel_file = File::open(kernel_path).expect("Invalid kernel path");
         let cmdline = CString::new(cmdline).expect("Invalid cmdline");
         let metadata = serde_json::to_vec(&eif_info).expect("Could not serialize metadata: {}");
+        let signer = EifSigner::new(sign_info);
         EifBuilder {
             kernel: kernel_file,
             cmdline: cmdline.into_bytes(),
             ramdisks: Vec::new(),
-            sign_info,
+            signer,
             signature: None,
             signature_size: 0,
             metadata,
@@ -245,7 +150,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
     }
 
     pub fn is_signed(&mut self) -> bool {
-        self.sign_info.is_some()
+        self.signer.is_some()
     }
 
     pub fn add_ramdisk(&mut self, ramdisk_path: &Path) {
@@ -255,7 +160,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
 
     /// The first two sections are the kernel and the cmdline and the last is metadata.
     fn num_sections(&self) -> u16 {
-        DEFAULT_SECTIONS_COUNT + self.ramdisks.len() as u16 + self.sign_info.iter().count() as u16
+        DEFAULT_SECTIONS_COUNT + self.ramdisks.len() as u16 + self.signer.iter().count() as u16
     }
 
     fn sections_offsets(&self) -> [u64; MAX_NUM_SECTIONS] {
@@ -268,7 +173,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             result[i + DEFAULT_SECTIONS_COUNT as usize] = self.ramdisk_offset(i);
         }
 
-        if self.sign_info.is_some() {
+        if self.signer.is_some() {
             result[DEFAULT_SECTIONS_COUNT as usize + self.ramdisks.len()] = self.signature_offset();
         }
 
@@ -286,7 +191,7 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             result[i + DEFAULT_SECTIONS_COUNT as usize] = self.ramdisk_size(&self.ramdisks[i]);
         }
 
-        if self.sign_info.is_some() {
+        if self.signer.is_some() {
             result[DEFAULT_SECTIONS_COUNT as usize + self.ramdisks.len()] = self.signature_size();
         }
 
@@ -347,61 +252,6 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
 
     fn metadata_size(&self) -> u64 {
         self.metadata.len() as u64
-    }
-
-    /// Generate the signature of a certain PCR.
-    fn generate_pcr_signature(
-        &mut self,
-        register_index: i32,
-        register_value: Vec<u8>,
-    ) -> PcrSignature {
-        let sign_info = self
-            .sign_info
-            .as_ref()
-            .expect("Signing key is expected to be provided");
-        let pcr_info = PcrInfo::new(register_index, register_value);
-        let payload = to_vec(&pcr_info).expect("Could not serialize PCR info");
-
-        let cose_sign = match &sign_info.key {
-            SignKey::LocalPrivateKey(key) => {
-                let pkey = PKey::private_key_from_pem(key)
-                    .expect("Could not deserialize the PEM-formatted private key");
-
-                CoseSign1::new::<Openssl>(&payload, &HeaderMap::new(), &pkey).unwrap()
-            }
-            SignKey::KmsKey(key) => {
-                let arc_key = key.clone();
-                let act = async move {
-                    tokio::task::spawn_blocking(move || {
-                        CoseSign1::new::<Openssl>(payload.as_slice(), &HeaderMap::new(), &*arc_key)
-                            .unwrap()
-                    })
-                    .await
-                    .unwrap()
-                };
-                let runtime = Runtime::new().expect("Must be able to create a runtime");
-                runtime.block_on(act)
-            }
-        };
-
-        PcrSignature {
-            signing_certificate: sign_info.cert.clone(),
-            signature: cose_sign.as_bytes(false).unwrap(),
-        }
-    }
-
-    /// Generate the signature of the EIF.
-    /// eif_signature = [pcr0_signature]
-    fn generate_eif_signature(&mut self, measurements: &BTreeMap<String, String>) {
-        let pcr0_index = 0;
-        let pcr0_value = hex::decode(measurements.get("PCR0").unwrap()).unwrap();
-        let pcr0_signature = self.generate_pcr_signature(pcr0_index, pcr0_value);
-
-        let eif_signature = vec![pcr0_signature];
-        let serialized_signature =
-            to_vec(&eif_signature).expect("Could not serialize the signature");
-        self.signature_size = serialized_signature.len() as u64;
-        self.signature = Some(serialized_signature)
     }
 
     pub fn header(&mut self) -> EifHeader {
@@ -653,11 +503,15 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             &mut self.customer_app_hasher,
             &mut self.certificate_hasher,
             self.hasher_template.clone(),
-            self.sign_info.is_some(),
+            self.signer.is_some(),
         )
         .expect("Failed to get measurements");
-        if self.sign_info.is_some() {
-            self.generate_eif_signature(&measurements);
+        if let Some(signer) = self.signer.as_ref() {
+            let signature = signer
+                .generate_eif_signature(&measurements)
+                .expect("Failed to generate signature");
+            self.signature_size = signature.len() as u64;
+            self.signature = Some(signature);
         }
         self.compute_crc();
         self.write_header(output_file);
@@ -702,9 +556,10 @@ impl<T: Digest + Debug + Write + Clone> EifBuilder<T> {
             }
         }
 
-        if let Some(sign_info) = self.sign_info.as_ref() {
-            let cert = openssl::x509::X509::from_pem(&sign_info.cert[..]).unwrap();
-            let cert_der = cert.to_der().unwrap();
+        if let Some(signer) = self.signer.as_ref() {
+            let cert_der = signer
+                .get_cert_der()
+                .expect("Certificate must be available and convertible to DER");
             // This is equivalent to extend(cert.digest(sha384)), since hasher is going to
             // hash the DER certificate (cert.digest()) and then tpm_extend_finalize_reset
             // will do the extend.
@@ -829,7 +684,7 @@ impl PcrSignatureChecker {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{SignKey, SignKeyData, SignKeyDataInfo, SignKeyInfo};
+    use crate::utils::eif_signer::{SignKey, SignKeyData, SignKeyDataInfo, SignKeyInfo};
     use std::{env, io::Write};
     use tempfile::{NamedTempFile, TempPath};
 
