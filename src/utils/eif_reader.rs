@@ -5,6 +5,7 @@ use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
 };
+use crate::utils::get_pcrs;
 use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::pkey::PKey;
@@ -211,6 +212,17 @@ impl EifReader {
 
     pub fn get_metadata(&self) -> Option<EifIdentityInfo> {
         self.metadata.clone()
+    }
+
+    pub fn get_measurements(&mut self) -> Result<BTreeMap<String, String>, String> {
+        get_pcrs(
+            &mut self.image_hasher,
+            &mut self.bootstrap_hasher,
+            &mut self.app_hasher,
+            &mut self.cert_hasher,
+            Sha384::new(),
+            self.signature_section.is_some(),
+        )
     }
 
     /// Returns deserialized header section
