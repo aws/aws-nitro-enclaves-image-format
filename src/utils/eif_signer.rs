@@ -383,3 +383,113 @@ impl EifSigner {
             .map_err(|err| format!("Failed to write checksum: {:?}", err))
     }
 }
+
+#[cfg(test)]
+mod arn_tests {
+    use super::parse_kms_arn;
+
+    #[test]
+    fn test_valid_kms_arns() {
+        // Test cases with expected captures: (arn, region, key_id)
+        let test_cases = vec![
+            (
+                "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+                "us-east-1",
+                "1234abcd-12ab-34cd-56ef-1234567890ab",
+            ),
+            (
+                "arn:aws:kms:us-east-1:123456789012:key:1234abcd-12ab-34cd-56ef-1234567890ab",
+                "us-east-1",
+                "1234abcd-12ab-34cd-56ef-1234567890ab",
+            ),
+            (
+                "arn:aws-cn:kms:cn-north-1:123456789012:key/abcd1234",
+                "cn-north-1",
+                "abcd1234",
+            ),
+            (
+                "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key:5678efgh",
+                "us-gov-west-1",
+                "5678efgh",
+            ),
+        ];
+
+        for (arn, expected_region, expected_key_id) in test_cases {
+            let (captured_region, captured_key_id) =
+                parse_kms_arn(&arn).expect("Should match valid ARN");
+            assert_eq!(captured_region, expected_region);
+            assert_eq!(captured_key_id, expected_key_id);
+        }
+    }
+
+    #[test]
+    fn test_invalid_kms_arns() {
+        let invalid_arns = vec![
+            // Invalid partition
+            "arn:invalid:kms:us-east-1:123456789012:key/abcd1234",
+            // Missing region
+            "arn:aws:kms::123456789012:key/abcd1234",
+            // Invalid account ID (too short)
+            "arn:aws:kms:us-east-1:12345678901:key/abcd1234",
+            // Invalid account ID (too long)
+            "arn:aws:kms:us-east-1:1234567890123:key/abcd1234",
+            // Invalid account ID (non-numeric)
+            "arn:aws:kms:us-east-1:12345678901a:key/abcd1234",
+            // Wrong service
+            "arn:aws:s3:us-east-1:123456789012:key/abcd1234",
+            // Invalid resource type
+            "arn:aws:kms:us-east-1:123456789012:alias/abcd1234",
+            // Invalid key ID format
+            "arn:aws:kms:us-east-1:123456789012:key/abc@1234",
+            // Missing key ID
+            "arn:aws:kms:us-east-1:123456789012:key/",
+            "arn:aws:kms:us-east-1:123456789012:key:",
+            // Invalid separator
+            "arn:aws:kms:us-east-1:123456789012:key-abcd1234",
+            // Empty string
+            "",
+        ];
+
+        for arn in invalid_arns {
+            assert!(
+                parse_kms_arn(arn).is_none(),
+                "ARN should not match: {}",
+                arn
+            );
+        }
+    }
+
+    #[test]
+    fn test_region_formats() {
+        let valid_regions = vec![
+            "us-east-1",
+            "us-west-2",
+            "eu-central-1",
+            "ap-southeast-2",
+            "cn-north-1",
+            "us-gov-west-1",
+        ];
+
+        for region in valid_regions {
+            let arn = format!("arn:aws:kms:{}:123456789012:key/abcd1234", region);
+            let (captured_region, _) = parse_kms_arn(&arn).expect("Should match valid region");
+            assert_eq!(captured_region, region);
+        }
+    }
+
+    #[test]
+    fn test_key_id_formats() {
+        let valid_key_ids = vec![
+            "1234abcd-12ab-34cd-56ef-1234567890ab", // UUID format
+            "abcd1234",                             // Short format
+            "12345678-1234-1234-1234-123456789012", // Another UUID format
+            "a1b2c3d4-e5f6",                        // Partial UUID format
+        ];
+
+        for key_id in valid_key_ids {
+            let arn = format!("arn:aws:kms:us-east-1:123456789012:key/{}", key_id);
+            let (_, captured_id) = parse_kms_arn(&arn).expect("Should match valid key ID");
+            assert_eq!(captured_id, key_id);
+        }
+    }
+}
