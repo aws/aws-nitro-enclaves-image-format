@@ -80,7 +80,13 @@ OPTIONS:
             Specify output file path
 
         --private-key <private-key>
-            Specify KMS key ARN, or the path to the local private key file
+            Specify the path to the private-key
+
+        --kms-key-id <ID>
+            Specify ARN of a KMS key
+
+        --kms-key-region <REGION>
+            Region where the KMS key resides
 
         --ramdisk <FILE>
             Sets path to a ramdisk file representing a cpio.gz archive

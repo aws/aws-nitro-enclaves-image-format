@@ -18,10 +18,10 @@ use aws_nitro_enclaves_image_format::defs::{EifBuildInfo, EifIdentityInfo, EIF_H
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
-    utils::{get_pcrs, EifBuilder, SignKeyData},
+    utils::{get_pcrs, EifBuilder, SignKeyData, SignKeyDataInfo, SignKeyInfo},
 };
 use chrono::offset::Utc;
-use clap::{App, Arg, ValueSource};
+use clap::{App, Arg, ArgGroup, ValueSource};
 use serde_json::json;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
@@ -93,14 +93,32 @@ fn main() {
                 .long("signing-certificate")
                 .help("Specify the path to the signing certificate")
                 .takes_value(true)
-                .requires("private-key"),
+                .requires("signing-key"),
         )
         .arg(
             Arg::with_name("private-key")
                 .long("private-key")
-                .help("Path to a local key or KMS key ARN")
+                .help("Specify the path to the private-key")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("kms-key-id")
+                .long("kms-key-id")
+                .help("Specify unique id of the KMS key")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("kms-key-region")
+                .long("kms-key-region")
+                .help("Specify region in which the KMS key resides")
                 .takes_value(true)
-                .requires("signing-certificate"),
+                .requires("kms-key-id")
+        )
+        .group(
+            ArgGroup::new("signing-key")
+                .args(&["kms-key-id", "private-key"])
+                .multiple(false)
+                .requires("signing-certificate")
         )
         .arg(
             Arg::with_name("image_name")
@@ -192,18 +210,31 @@ fn main() {
         .expect("Output file should be provided");
 
     let signing_certificate = matches.value_of("signing-certificate");
+
     let private_key = matches.value_of("private-key");
 
-    let sign_info = match (private_key, signing_certificate) {
-        (Some(key), Some(cert)) => SignKeyData::new(key, Path::new(&cert)).map_or_else(
-            |e| {
-                eprintln!("Could not read signing info: {:?}", e);
-                None
-            },
-            Some,
-        ),
-        _ => None,
+    let kms_key_id = matches.value_of("kms-key-id");
+    let kms_key_region = matches.value_of("kms-key-region");
+
+    let sign_key_info = match (kms_key_id, private_key) {
+        (None, None) => None,
+        (Some(kms_id), None) => Some(SignKeyInfo::KmsKeyInfo {
+            id: kms_id.into(),
+            region: kms_key_region.map(str::to_string),
+        }),
+        (None, Some(key_path)) => Some(SignKeyInfo::LocalPrivateKeyInfo {
+            path: key_path.into(),
+        }),
+        _ => panic!("kms-key-id and private-key parameters are mutually exclusive"),
     };
+
+    let sign_key_data = sign_key_info.map(|key_info| {
+        SignKeyData::new(&SignKeyDataInfo {
+            cert_path: signing_certificate.unwrap().into(),
+            key_info,
+        })
+        .expect("Could not read signing info")
+    });
 
     let img_name = matches.value_of("image_name").map(|val| val.to_string());
     let img_version = matches.value_of("image_name").map(|val| val.to_string());
@@ -298,7 +329,7 @@ fn main() {
         cmdline,
         ramdisks,
         output_path,
-        sign_info,
+        sign_info: sign_key_data,
         eif_info,
         arch,
     };
