@@ -8,6 +8,7 @@ use aws_nitro_enclaves_cose::{
 use aws_sdk_kms::client::Client;
 use aws_types::region::Region;
 use openssl::pkey::PKey;
+use regex::Regex;
 use serde_cbor::to_vec;
 use sha2::{Digest, Sha384};
 use std::collections::BTreeMap;
@@ -28,7 +29,7 @@ pub enum SignKey {
 
 // Signing key details
 #[derive(Clone, Debug)]
-pub enum SignKeyInfo {
+enum SignKeyInfo {
     // Local private key file path
     LocalPrivateKeyInfo { path: std::path::PathBuf },
 
@@ -36,15 +37,38 @@ pub enum SignKeyInfo {
     KmsKeyInfo { id: String, region: Option<String> },
 }
 
-// Full details of signing key
-#[derive(Clone, Debug)]
-pub struct SignKeyDataInfo {
-    // Path to the certificate file
-    pub cert_path: std::path::PathBuf,
-
-    // Details of signing key itself
-    pub key_info: SignKeyInfo,
+impl SignKeyInfo {
+    pub fn new(key_location: &str) -> Result<Self, String> {
+        match parse_kms_arn(key_location) {
+            Some((region, key_id)) => Ok(SignKeyInfo::KmsKeyInfo {
+                id: key_id,
+                region: Some(region),
+            }),
+            None => Ok(SignKeyInfo::LocalPrivateKeyInfo {
+                path: key_location.into(),
+            }),
+        }
+    }
 }
+
+fn parse_kms_arn(s: &str) -> Option<(String, String)> {
+    // Matches KMS key ARNs in the format:
+    // arn:partition:kms:region:account-id:key[/|:]key-id where:
+    // - partition is: aws, aws-cn, or aws-us-gov
+    // - region is captured: letters, numbers, hyphens
+    // - account-id: exactly 12 digits
+    // - key-id is captured: letters, numbers, hyphens
+    let re = Regex::new(
+        r"^arn:(?:aws|aws-cn|aws-us-gov):kms:([a-z0-9-]+):\d{12}:key[:/]([a-zA-Z0-9-]+)$",
+    )
+    .expect("Regular expression for parsing ARNs must be valid");
+
+    re.captures(s).map(|caps| {
+        // Safe to use index access since we know the pattern has exactly 2 capture groups
+        (caps[1].to_string(), caps[2].to_string())
+    })
+}
+
 // Full signining key data
 pub struct SignKeyData {
     // x509 certificate
@@ -55,15 +79,17 @@ pub struct SignKeyData {
 }
 
 impl SignKeyData {
-    pub fn new(sign_info: &SignKeyDataInfo) -> Result<Self, String> {
-        let mut cert_file = File::open(&sign_info.cert_path)
+    pub fn new(key_location: &str, certificate: &std::path::Path) -> Result<Self, String> {
+        let key_info = SignKeyInfo::new(key_location)?;
+
+        let mut cert_file = File::open(certificate)
             .map_err(|err| format!("Could not open the certificate file: {:?}", err))?;
         let mut cert = Vec::new();
         cert_file
             .read_to_end(&mut cert)
             .map_err(|err| format!("Could not read the certificate file: {:?}", err))?;
 
-        let key = match &sign_info.key_info {
+        let key = match &key_info {
             SignKeyInfo::LocalPrivateKeyInfo { path } => {
                 let mut key_file = File::open(path)
                     .map_err(|err| format!("Could not open the key file: {:?}", err))?;

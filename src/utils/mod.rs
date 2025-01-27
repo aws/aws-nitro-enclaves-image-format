@@ -19,7 +19,7 @@ use sha2::Digest;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-pub use eif_signer::{EifSigner, SignKeyData, SignKeyDataInfo, SignKeyInfo};
+pub use eif_signer::{EifSigner, SignKeyData};
 
 /// Contains code for EifBuilder a simple library used for building an EifFile
 /// from a:
@@ -684,8 +684,8 @@ impl PcrSignatureChecker {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::eif_signer::{SignKey, SignKeyData, SignKeyDataInfo, SignKeyInfo};
-    use std::{env, io::Write};
+    use crate::utils::eif_signer::{SignKey, SignKeyData};
+    use std::{env, io::Write, path::Path};
     use tempfile::{NamedTempFile, TempPath};
 
     const TEST_CERT_CONTENT: &[u8] = "test cert content".as_bytes();
@@ -707,12 +707,7 @@ mod tests {
     fn test_local_sign_key_data_from_invalid_local_key_info() -> Result<(), std::io::Error> {
         let cert_file_path = generate_certificate_file()?;
 
-        let key_data = SignKeyData::new(&SignKeyDataInfo {
-            cert_path: (&cert_file_path).into(),
-            key_info: SignKeyInfo::LocalPrivateKeyInfo {
-                path: "/invalid/path".into(),
-            },
-        });
+        let key_data = SignKeyData::new("/incorrect/pk/path".into(), &cert_file_path);
 
         assert!(key_data.is_err());
         Ok(())
@@ -721,13 +716,11 @@ mod tests {
     #[test]
     fn test_local_sign_key_data_from_invalid_cert_key_info() -> Result<(), std::io::Error> {
         let key_file_path = generate_pkey_file()?;
+        let key_path_str = <TempPath as AsRef<Path>>::as_ref(&key_file_path)
+            .to_str()
+            .expect("Key file must be correct");
 
-        let key_data = SignKeyData::new(&SignKeyDataInfo {
-            cert_path: "/invalid/path".into(),
-            key_info: SignKeyInfo::LocalPrivateKeyInfo {
-                path: (&key_file_path).into(),
-            },
-        });
+        let key_data = SignKeyData::new(key_path_str, Path::new("/incorrect/cert/path"));
 
         assert!(key_data.is_err());
         Ok(())
@@ -735,16 +728,13 @@ mod tests {
 
     #[test]
     fn test_local_sign_key_data_from_valid_key_info() -> Result<(), std::io::Error> {
-        let cert_file_path = generate_certificate_file()?;
         let key_file_path = generate_pkey_file()?;
+        let key_path_str = <TempPath as AsRef<Path>>::as_ref(&key_file_path)
+            .to_str()
+            .expect("Key file must be correct");
+        let cert_file_path = generate_certificate_file()?;
 
-        let key_data = SignKeyData::new(&SignKeyDataInfo {
-            cert_path: (&cert_file_path).into(),
-            key_info: SignKeyInfo::LocalPrivateKeyInfo {
-                path: (&key_file_path).into(),
-            },
-        })
-        .unwrap();
+        let key_data = SignKeyData::new(key_path_str, &cert_file_path).unwrap();
 
         assert_eq!(key_data.cert, TEST_CERT_CONTENT);
         assert!(matches!(key_data.key, SignKey::LocalPrivateKey(key) if key == TEST_PKEY_CONTENT));
@@ -753,99 +743,30 @@ mod tests {
     }
 
     mod kms {
-        use std::sync::Mutex;
-
         use super::*;
-
-        // Mutex to lock and prevent running tests that modify AWS_REGION env variable
-        // within multiple threads
-        static ENV_MUTEX: std::sync::Mutex<i32> = Mutex::new(0);
 
         #[test]
         fn test_kms_sign_key_data_from_invalid_cert_key_info() -> Result<(), std::io::Error> {
-            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
-            let key_region = env::var("AWS_KMS_TEST_KEY_REGION").ok();
+            let key_arn =
+                env::var("AWS_KMS_TEST_KEY_ARN").expect("Please set AWS_KMS_TEST_KEY_ARN");
 
-            let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: "/invalid/path".into(),
-                key_info: SignKeyInfo::KmsKeyInfo {
-                    id: key_id,
-                    region: key_region,
-                },
-            });
+            let key_data = SignKeyData::new(&key_arn, Path::new("/incorrect/cert/path"));
 
             assert!(key_data.is_err());
             Ok(())
         }
 
         #[test]
-        fn test_kms_sign_key_data_from_valid_key_info_explicit_region() -> Result<(), std::io::Error>
-        {
+        fn test_kms_sign_key_data_from_valid_key_arn() -> Result<(), std::io::Error> {
             let cert_file_path = generate_certificate_file()?;
-            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
-            let key_region =
-                env::var("AWS_KMS_TEST_KEY_REGION").expect("Please set AWS_KMS_TEST_KEY_REGION");
-            let _m = ENV_MUTEX.lock().unwrap();
-            env::remove_var("AWS_REGION");
+            let key_arn =
+                env::var("AWS_KMS_TEST_KEY_ARN").expect("Please set AWS_KMS_TEST_KEY_ARN");
 
-            let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: (&cert_file_path).into(),
-                key_info: SignKeyInfo::KmsKeyInfo {
-                    id: key_id,
-                    region: Some(key_region),
-                },
-            })
-            .unwrap();
+            let key_data = SignKeyData::new(&key_arn, &cert_file_path).unwrap();
 
             assert_eq!(key_data.cert, TEST_CERT_CONTENT);
             assert!(matches!(key_data.key, SignKey::KmsKey(_)));
 
-            Ok(())
-        }
-
-        #[test]
-        fn test_kms_sign_key_data_from_valid_key_info_region_from_env() -> Result<(), std::io::Error>
-        {
-            let cert_file_path = generate_certificate_file()?;
-            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
-            let key_region =
-                env::var("AWS_KMS_TEST_KEY_REGION").expect("Please set AWS_KMS_TEST_KEY_REGION");
-
-            let _m = ENV_MUTEX.lock().unwrap();
-            env::set_var("AWS_REGION", key_region);
-
-            let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: (&cert_file_path).into(),
-                key_info: SignKeyInfo::KmsKeyInfo {
-                    id: key_id,
-                    region: None,
-                },
-            })
-            .unwrap();
-
-            assert_eq!(key_data.cert, TEST_CERT_CONTENT);
-            assert!(matches!(key_data.key, SignKey::KmsKey(_)));
-
-            Ok(())
-        }
-
-        #[test]
-        fn test_kms_sign_key_data_from_valid_key_info_no_region() -> Result<(), std::io::Error> {
-            let cert_file_path = generate_certificate_file()?;
-            let key_id = env::var("AWS_KMS_TEST_KEY_ID").expect("Please set AWS_KMS_TEST_KEY_ID");
-
-            let _m = ENV_MUTEX.lock().unwrap();
-            env::remove_var("AWS_REGION");
-
-            let key_data = SignKeyData::new(&SignKeyDataInfo {
-                cert_path: (&cert_file_path).into(),
-                key_info: SignKeyInfo::KmsKeyInfo {
-                    id: key_id,
-                    region: None,
-                },
-            });
-
-            assert!(key_data.is_err());
             Ok(())
         }
     }
