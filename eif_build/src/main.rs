@@ -21,13 +21,12 @@ use aws_nitro_enclaves_image_format::{
     utils::{get_pcrs, EifBuilder, SignKeyData},
 };
 use chrono::offset::Utc;
-use clap::{App, Arg, ValueSource};
+use clap::{App, Arg};
 use serde_json::json;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::Write;
-use ValueSource::CommandLine;
 
 pub struct EifBuildParameters<'a> {
     pub kernel_path: &'a str,
@@ -240,41 +239,6 @@ fn main() {
 
     if let Some(kernel_config) = matches.get_one::<String>("kernel_config") {
         build_info = generate_build_info!(kernel_config).expect("Can not generate build info");
-    }
-
-    if matches.value_source("build_time") == Some(CommandLine) {
-        build_info.build_time = matches
-            .get_one::<String>("build_time")
-            .expect("default value")
-            .to_string();
-    }
-
-    if matches.value_source("build_tool") == Some(CommandLine) {
-        build_info.build_tool = matches
-            .get_one::<String>("build_tool")
-            .expect("default_value")
-            .to_string();
-    }
-
-    if matches.value_source("build_tool_version") == Some(CommandLine) {
-        build_info.build_tool_version = matches
-            .get_one::<String>("build_tool_version")
-            .expect("default value")
-            .to_string();
-    }
-
-    if matches.value_source("img_os") == Some(CommandLine) {
-        build_info.img_os = matches
-            .get_one::<String>("img_os")
-            .expect("default value")
-            .to_string();
-    }
-
-    if matches.value_source("img_kernel") == Some(CommandLine) {
-        build_info.img_kernel = matches
-            .get_one::<String>("img_kernel")
-            .expect("default value")
-            .to_string();
     }
 
     let eif_info = EifIdentityInfo {
