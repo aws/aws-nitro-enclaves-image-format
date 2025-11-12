@@ -21,7 +21,7 @@ use aws_nitro_enclaves_image_format::{
     utils::{get_pcrs, EifBuilder, SignKeyData},
 };
 use chrono::offset::Utc;
-use clap::{Arg, ArgAction, Command};
+use clap::{App, Arg};
 use serde_json::json;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
@@ -42,140 +42,156 @@ fn main() {
     let now = Utc::now().to_rfc3339();
     let build_tool = env!("CARGO_PKG_NAME").to_string();
     let build_tool_version = env!("CARGO_PKG_VERSION").to_string();
-    let img_os = "OS";
-    let img_kernel = "kernel";
-    let matches = Command::new("Enclave image format builder")
+    let img_os = "OS".to_string();
+    let img_kernel = "kernel".to_string();
+    let matches = App::new("Enclave image format builder")
         .about("Builds an eif file")
         .arg(
-            Arg::new("kernel")
+            Arg::with_name("kernel")
                 .long("kernel")
                 .value_name("FILE")
                 .required(true)
                 .help("Sets path to a bzImage/Image file for x86_64/aarch64 architecture")
+                .takes_value(true),
         )
         .arg(
-            Arg::new("kernel_config")
+            Arg::with_name("kernel_config")
                 .long("kernel_config")
                 .value_name("FILE")
                 .help("Sets path to a bzImage.config/Image.config file for x86_64/aarch64 architecture")
+                .takes_value(true),
         )
         .arg(
-            Arg::new("cmdline")
+            Arg::with_name("cmdline")
                 .long("cmdline")
                 .help("Sets the cmdline")
                 .value_name("String")
                 .required(true)
+                .takes_value(true),
         )
         .arg(
-            Arg::new("output")
+            Arg::with_name("output")
                 .long("output")
                 .help("Specify output file path")
                 .value_name("FILE")
                 .required(true)
+                .takes_value(true),
         )
         .arg(
-            Arg::new("ramdisk")
+            Arg::with_name("ramdisk")
                 .long("ramdisk")
                 .value_name("FILE")
                 .required(true)
                 .help("Sets path to a ramdisk file representing a cpio.gz archive")
-                .action(ArgAction::Append)
+                .takes_value(true)
+                .multiple(true)
+                .number_of_values(1),
         )
         .arg(
-            Arg::new("signing-certificate")
+            Arg::with_name("signing-certificate")
                 .long("signing-certificate")
                 .help("Specify the path to the signing certificate")
+                .takes_value(true)
                 .requires("private-key"),
         )
         .arg(
-            Arg::new("private-key")
+            Arg::with_name("private-key")
                 .long("private-key")
                 .help("Path to a local key or KMS key ARN")
+                .takes_value(true)
                 .requires("signing-certificate"),
         )
         .arg(
-            Arg::new("image_name")
+            Arg::with_name("image_name")
                 .long("name")
                 .help("Name for enclave image")
+                .takes_value(true),
         )
         .arg(
-            Arg::new("image_version")
+            Arg::with_name("image_version")
                 .long("version")
                 .help("Version of the enclave image")
+                .takes_value(true),
         )
         .arg(
-            Arg::new("metadata")
+            Arg::with_name("metadata")
                 .long("metadata")
                 .help("Path to JSON containing the custom metadata provided by the user.")
+                .takes_value(true),
         )
         .arg(
-            Arg::new("arch")
+            Arg::with_name("arch")
                 .long("arch")
                 .help("Sets image architecture")
                 .default_value("x86_64")
                 .value_parser(["x86_64", "aarch64"])
+                .takes_value(true),
         )
         .arg(
-            Arg::new("build_time")
+            Arg::with_name("build_time")
                 .long("build-time")
                 .help("Overrides image build time.")
-                .default_value(now)
+                .default_value(&now)
+                .takes_value(true),
         )
         .arg(
-            Arg::new("build_tool")
+            Arg::with_name("build_tool")
                 .long("build-tool")
                 .help("Image build tool name.")
-                .default_value(build_tool)
+                .default_value(&build_tool)
+                .takes_value(true),
         )
         .arg(
-            Arg::new("build_tool_version")
+            Arg::with_name("build_tool_version")
                 .long("build-tool-version")
                 .help("Overrides image build tool version.")
-                .default_value(build_tool_version)
+                .default_value(&build_tool_version)
+                .takes_value(true),
         )
         .arg(
-            Arg::new("img_os")
+            Arg::with_name("img_os")
                 .long("img-os")
                 .help("Overrides image Operating System name.")
-                .default_value(img_os)
+                .default_value(&img_os)
+                .takes_value(true),
         )
         .arg(
-            Arg::new("img_kernel")
+            Arg::with_name("img_kernel")
                 .long("img-kernel")
                 .help("Overrides image Operating System kernel version.")
-                .default_value(img_kernel)
+                .default_value(&img_kernel)
+                .takes_value(true),
         )
         .arg(
-            Arg::new("algo")
+            Arg::with_name("algo")
                 .long("algo")
                 .help("Sets algorithm to be used for measuring the image")
-                .value_parser(["sha256", "sha384", "sha512"])
+                .possible_values(["sha256", "sha384", "sha512"])
                 .default_value("sha384")
         )
         .get_matches();
 
-    let arch = matches.get_one::<String>("arch").expect("default value");
+    let arch = matches.value_of("arch").expect("default value");
 
     let kernel_path = matches
-        .get_one::<String>("kernel")
+        .value_of("kernel")
         .expect("Kernel path is a mandatory option");
 
     let cmdline = matches
-        .get_one::<String>("cmdline")
+        .value_of("cmdline")
         .expect("Cmdline is a mandatory option");
 
     let ramdisks: Vec<&str> = matches
-        .get_many::<String>("ramdisk")
+        .values_of("ramdisk")
         .expect("At least one ramdisk should be specified")
-        .map(|s| s.as_str())
         .collect();
 
     let output_path = matches
-        .get_one::<String>("output")
+        .value_of("output")
         .expect("Output file should be provided");
 
-    let signing_certificate = matches.get_one::<String>("signing-certificate");
-    let private_key = matches.get_one::<String>("private-key");
+    let signing_certificate = matches.value_of("signing-certificate");
+    let private_key = matches.value_of("private-key");
 
     let sign_info = match (private_key, signing_certificate) {
         (Some(key), Some(cert)) => SignKeyData::new(key, Path::new(&cert)).map_or_else(
@@ -188,9 +204,9 @@ fn main() {
         _ => None,
     };
 
-    let img_name = matches.get_one::<String>("image_name").map(String::from);
-    let img_version = matches.get_one::<String>("image_name").map(String::from);
-    let metadata_path = matches.get_one::<String>("metadata").map(String::from);
+    let img_name = matches.value_of("image_name").map(|val| val.to_string());
+    let img_version = matches.value_of("image_name").map(|val| val.to_string());
+    let metadata_path = matches.value_of("metadata").map(|val| val.to_string());
     let metadata = match metadata_path {
         Some(ref path) => {
             parse_custom_metadata(path).expect("Can not parse specified metadata file")
@@ -252,9 +268,9 @@ fn main() {
     };
 
     let algo = matches
-        .get_one::<String>("algo")
+        .value_of("algo")
         .expect("Clap must specify default value");
-    match algo.as_str() {
+    match algo {
         "sha256" => build_eif(params, Sha256::new()),
         "sha512" => build_eif(params, Sha512::new()),
         "sha384" => build_eif(params, Sha384::new()),
