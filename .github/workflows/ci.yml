@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [1.71.1, stable, nightly]
+        rust: [1.83, stable, nightly]
     steps:
     - uses: actions/checkout@v3
     - run: rustup install ${{ matrix.rust }}

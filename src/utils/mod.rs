@@ -693,13 +693,13 @@ mod tests {
 
     fn generate_certificate_file() -> Result<TempPath, std::io::Error> {
         let cert_file = NamedTempFile::new()?;
-        cert_file.as_file().write(TEST_CERT_CONTENT)?;
+        cert_file.as_file().write_all(TEST_CERT_CONTENT)?;
         Ok(cert_file.into_temp_path())
     }
 
     fn generate_pkey_file() -> Result<TempPath, std::io::Error> {
         let key_file = NamedTempFile::new()?;
-        key_file.as_file().write(TEST_PKEY_CONTENT)?;
+        key_file.as_file().write_all(TEST_PKEY_CONTENT)?;
         Ok(key_file.into_temp_path())
     }
 
@@ -707,7 +707,7 @@ mod tests {
     fn test_local_sign_key_data_from_invalid_local_key_info() -> Result<(), std::io::Error> {
         let cert_file_path = generate_certificate_file()?;
 
-        let key_data = SignKeyData::new("/incorrect/pk/path".into(), &cert_file_path);
+        let key_data = SignKeyData::new("/incorrect/pk/path", &cert_file_path);
 
         assert!(key_data.is_err());
         Ok(())
