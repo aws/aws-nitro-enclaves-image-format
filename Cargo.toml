@@ -28,7 +28,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"]}
 aws-sdk-kms = "<=1.20"
 aws-config = "<=1.1"
 aws-types = "<=1.1"
-aws-smithy-runtime = { version = "<=1.2" }
+aws-smithy-runtime = "1.8.6"
 # Needed by `aws-nitro-enclaves-cose` to perform calls to KMS.
 tokio = { version = "1.20", features = ["rt-multi-thread"] }
 regex = "1.0"
