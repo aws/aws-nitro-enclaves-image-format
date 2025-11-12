@@ -416,7 +416,7 @@ mod arn_tests {
 
         for (arn, expected_region, expected_key_id) in test_cases {
             let (captured_region, captured_key_id) =
-                parse_kms_arn(&arn).expect("Should match valid ARN");
+                parse_kms_arn(arn).expect("Should match valid ARN");
             assert_eq!(captured_region, expected_region);
             assert_eq!(captured_key_id, expected_key_id);
         }
