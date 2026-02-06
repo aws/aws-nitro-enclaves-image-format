@@ -189,7 +189,7 @@ fn main() {
     };
 
     let img_name = matches.get_one::<String>("image_name").map(String::from);
-    let img_version = matches.get_one::<String>("image_name").map(String::from);
+    let img_version = matches.get_one::<String>("image_version").map(String::from);
     let metadata_path = matches.get_one::<String>("metadata").map(String::from);
     let metadata = match metadata_path {
         Some(ref path) => {
