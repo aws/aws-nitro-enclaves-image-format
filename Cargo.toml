@@ -32,7 +32,7 @@ aws-smithy-runtime = "1.8.6"
 # Needed by `aws-nitro-enclaves-cose` to perform calls to KMS.
 tokio = { version = "1.20", features = ["rt-multi-thread"] }
 regex = "1.0"
-litemap = "=0.7.4"
+litemap = "=0.8.2"
 zerofrom = "=0.1.5"
 
 [dev-dependencies]
