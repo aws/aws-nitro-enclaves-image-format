@@ -26,6 +26,16 @@ pub const MAX_NUM_SECTIONS: usize = 32;
 /// PCR0 measures every bit except bit 0 (see `pcr0_flag_fold_bytes`).
 pub const EIF_HDR_ARCH_ARM64: u16 = 0x1;
 
+/// Matched feature flags (see the `bits 6-15` note above). Every reader and
+/// writer of the EIF header uses these bit values, so they must not change.
+pub const EIF_HDR_FLAG_PCIE: u16 = 1 << 6;
+pub const EIF_HDR_FLAG_PCIE_VSOCK: u16 = 1 << 7;
+pub const EIF_HDR_FLAG_PCIE_HOTPLUG: u16 = 1 << 8;
+pub const EIF_HDR_FLAG_PCIE_VIRTIO: u16 = 1 << 9;
+pub const EIF_HDR_FLAG_CPU_OVERCOMMIT: u16 = 1 << 11;
+pub const EIF_HDR_FLAG_CPU_ACCOUNTING: u16 = 1 << 12;
+pub const EIF_HDR_FLAG_PCIE_NUMA: u16 = 1 << 13;
+
 /// Returns the two big endian bytes to append to the END of the PCR0 stream.
 ///
 /// PCR0 measures the matched flags after every section, because no section
@@ -331,6 +341,23 @@ mod tests {
         ] {
             assert_eq!(pcr0_flag_fold_bytes(flags), fold, "flags {:#06x}", flags);
         }
+    }
+
+    #[test]
+    fn test_matched_flag_bit_values() {
+        use super::{
+            EIF_HDR_FLAG_CPU_ACCOUNTING, EIF_HDR_FLAG_CPU_OVERCOMMIT, EIF_HDR_FLAG_PCIE,
+            EIF_HDR_FLAG_PCIE_HOTPLUG, EIF_HDR_FLAG_PCIE_NUMA, EIF_HDR_FLAG_PCIE_VIRTIO,
+            EIF_HDR_FLAG_PCIE_VSOCK,
+        };
+        // Pin the bit values: they are part of the file format.
+        assert_eq!(EIF_HDR_FLAG_PCIE, 0x0040);
+        assert_eq!(EIF_HDR_FLAG_PCIE_VSOCK, 0x0080);
+        assert_eq!(EIF_HDR_FLAG_PCIE_HOTPLUG, 0x0100);
+        assert_eq!(EIF_HDR_FLAG_PCIE_VIRTIO, 0x0200);
+        assert_eq!(EIF_HDR_FLAG_CPU_OVERCOMMIT, 0x0800);
+        assert_eq!(EIF_HDR_FLAG_CPU_ACCOUNTING, 0x1000);
+        assert_eq!(EIF_HDR_FLAG_PCIE_NUMA, 0x2000);
     }
 
     /// The fold is appended to PCR0 after every section on both the build
