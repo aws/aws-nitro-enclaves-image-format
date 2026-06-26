@@ -154,14 +154,20 @@ The structure of the flags field is as follows:
 ```
  f e d c b a 9 8 7 6 5 4 3 2 1 0
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                             |a|
-|                             |r|
-|          reserved           |c|
-|                             |h|
+|                   |         |a|
+|  matched flags    |reserved |r|
+|                   |         |c|
+|                   |         |h|
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 * `arch`: determines the CPU architecture of the enclave this image file is for: `0` for `x86_64`, `1` for `aarch64`.
 This flag is mandatory and an EIF with an architecture other than the architecture of the enclave will be rejected.
+* matched flags: must equal the configuration the enclave is launched with.
+A launch with different matched flags fails.
+Bit 6 is `PCIE`, bit 7 `PCIE_VSOCK`, bit 8 `PCIE_HOTPLUG`, bit 9 `PCIE_VIRTIO`, bit 11 `CPU_OVERCOMMIT`, bit 12 `CPU_ACCOUNTING` and bit 13 `PCIE_NUMA`; bits 10, 14 and 15 are reserved.
+Every matched flag other than `PCIE` requires `PCIE`, `CPU_OVERCOMMIT` also requires `PCIE_VIRTIO`, and `PCIE_VSOCK` excludes `PCIE_VIRTIO`, `PCIE_HOTPLUG` and `CPU_OVERCOMMIT`.
+
+All flags except `arch` are measured in `PCR0` (see [`PCR0`](#pcr0)).
 
 ##### `default_mem`
 
@@ -552,11 +558,14 @@ It includes a sha384 message digest over the contiguous data of the `EifSectionK
 For `PCR0` this means `content_digest` is calculated as follows:
 
 ```
-content_digest[PCR0] = sha384sum( data(EifSectionKernel).data(EifSectionCmdline).data(EifSectionRamdisk[..]) )
+content_digest[PCR0] = sha384sum( data(EifSectionKernel).data(EifSectionCmdline).data(EifSectionRamdisk[..]).fold(flags) )
 ```
 
 *Note: The order of elements in that calculation depends on the order of sections in the EIF.
 Only the data for each section is part of the calculation, the headers are excluded.*
+
+`fold(flags)` is the `flags` field with the `arch` bit cleared, as two big-endian bytes.
+It is empty when that value is zero, so images without matched flags keep their `PCR0`.
 
 #### `PCR1`
 

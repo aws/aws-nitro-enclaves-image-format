@@ -19,9 +19,29 @@ use std::mem::size_of;
 pub const EIF_MAGIC: [u8; 4] = [46, 101, 105, 102]; // .eif in ascii
 pub const MAX_NUM_SECTIONS: usize = 32;
 /// EIF Header Flags
-/// bits 1  : Architecture - toggled for aarch64, cleared for x86_64
-/// bits 2-8: Unused
+/// bit 0     : Architecture: set for aarch64, clear for x86_64
+/// bits 6-15 : Matched feature flags (PCIE, PCIE_VSOCK, PCIE_VIRTIO,
+///             PCIE_HOTPLUG, CPU_OVERCOMMIT, CPU_ACCOUNTING, PCIE_NUMA).
+///             A launch fails unless they equal the launch configuration.
+/// PCR0 measures every bit except bit 0 (see `pcr0_flag_fold_bytes`).
 pub const EIF_HDR_ARCH_ARM64: u16 = 0x1;
+
+/// Returns the two big endian bytes to append to the END of the PCR0 stream.
+///
+/// PCR0 measures the matched flags after every section, because no section
+/// holds them.
+///
+/// The ARM64 bit is masked out. It names the target architecture, and an
+/// image for another architecture already has different section bytes, so
+/// its PCR0 differs anyway. Masking with `!EIF_HDR_ARCH_ARM64` covers every
+/// matched flag bit.
+///
+/// Returns `None` when the masked value is zero, so images without matched
+/// flags keep their PCR0.
+pub fn pcr0_flag_fold_bytes(flags: u16) -> Option<[u8; 2]> {
+    let folded = flags & !EIF_HDR_ARCH_ARM64;
+    (folded != 0).then(|| folded.to_be_bytes())
+}
 
 /// Current EIF version to be incremented every time we change the format
 /// of this structures, we assume changes are backwards compatible.
@@ -284,12 +304,101 @@ pub struct EifIdentityInfo {
 
 #[cfg(test)]
 mod tests {
+    use super::pcr0_flag_fold_bytes;
     use super::{EifHeader, EifSectionHeader, EifSectionType};
     use super::{EIF_MAGIC, MAX_NUM_SECTIONS};
 
     #[test]
     fn test_eif_section_type() {
         assert_eq!(std::mem::size_of::<EifSectionType>(), 2);
+    }
+
+    // These cases pin the fold used by PCR0 in the attestation document:
+    // the ARM64 bit is cleared, and a non-zero rest goes at the end of the
+    // PCR0 stream as two big endian bytes.
+
+    #[test]
+    fn test_pcr0_fold_bytes() {
+        // No flags fold to nothing, so legacy images keep their PCR0.  The
+        // arch bit (0x0001) is masked and the rest folds as two big endian
+        // bytes.
+        for (flags, fold) in [
+            (0x0000, None),
+            (0x0001, None),
+            (0x00c0, Some([0x00, 0xc0])),
+            (0x00c1, Some([0x00, 0xc0])),
+            (0x0340, Some([0x03, 0x40])),
+        ] {
+            assert_eq!(pcr0_flag_fold_bytes(flags), fold, "flags {:#06x}", flags);
+        }
+    }
+
+    /// The fold is appended to PCR0 after every section on both the build
+    /// and the describe path, and leaves PCR1 and PCR2 unchanged.
+    #[test]
+    fn test_pcr0_fold_reaches_build_and_describe() {
+        use crate::utils::eif_reader::EifReader;
+        use crate::utils::EifBuilder;
+        use sha2::{Digest, Sha384};
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut kernel = NamedTempFile::new().unwrap();
+        kernel.as_file_mut().write_all(&[0x4bu8; 4096]).unwrap();
+        let mut ramdisk = NamedTempFile::new().unwrap();
+        ramdisk.as_file_mut().write_all(&[0x21u8; 2048]).unwrap();
+        let build = |flags: u16| {
+            let eif_info = super::EifIdentityInfo {
+                img_name: "fold-test".to_string(),
+                img_version: "1.0".to_string(),
+                build_info: super::EifBuildInfo {
+                    build_time: "2026-11-09T00:00:00Z".to_string(),
+                    build_tool: "fold-test".to_string(),
+                    build_tool_version: "1.0".to_string(),
+                    img_os: "Linux".to_string(),
+                    img_kernel: "6.18".to_string(),
+                },
+                docker_info: serde_json::json!({}),
+                custom_info: serde_json::json!({}),
+            };
+            let mut builder = EifBuilder::new(
+                kernel.path(),
+                "console=ttyS0".to_string(),
+                None,
+                Sha384::new(),
+                flags,
+                eif_info,
+            );
+            builder.add_ramdisk(ramdisk.path());
+            let out = NamedTempFile::new().unwrap();
+            let built = builder.write_to(&mut out.reopen().unwrap());
+            let path = out.path().to_str().unwrap().to_string();
+            let described = EifReader::from_eif(path)
+                .unwrap()
+                .get_measurements()
+                .unwrap();
+            assert_eq!(described.get("PCR0"), built.get("PCR0"));
+            built
+        };
+        // Independent reference: TPM extend of the section payloads in
+        // file order, then the fold bytes.
+        let reference = |fold: &[u8]| {
+            let mut image = Sha384::new();
+            Digest::update(&mut image, [0x4bu8; 4096]);
+            Digest::update(&mut image, b"console=ttyS0");
+            Digest::update(&mut image, [0x21u8; 2048]);
+            Digest::update(&mut image, fold);
+            let mut pcr = Sha384::new();
+            Digest::update(&mut pcr, [0u8; 48]);
+            Digest::update(&mut pcr, image.finalize());
+            hex::encode(pcr.finalize())
+        };
+        let plain = build(0);
+        let flagged = build(0x00c0);
+        assert_eq!(plain["PCR0"], reference(&[]));
+        assert_eq!(flagged["PCR0"], reference(&[0x00, 0xc0]));
+        assert_eq!(plain.get("PCR1"), flagged.get("PCR1"));
+        assert_eq!(plain.get("PCR2"), flagged.get("PCR2"));
     }
 
     #[test]
