@@ -3,7 +3,8 @@
 
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
-    EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
+    pcr0_flag_fold_bytes, EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo,
+    PcrSignature,
 };
 use crate::utils::cbor::{from_slice, to_vec};
 use crate::utils::get_pcrs;
@@ -195,6 +196,14 @@ impl EifReader {
                     return Err("Found invalid EIF section".to_string());
                 }
             }
+        }
+
+        // The fold goes into PCR0 (image_hasher) only, after every section,
+        // so it must come after the section loop.
+        if let Some(fold) = pcr0_flag_fold_bytes(header.flags) {
+            image_hasher
+                .write_all(&fold)
+                .map_err(|e| format!("Failed to fold header flags into image_hasher: {:?}", e))?;
         }
 
         Ok(EifReader {

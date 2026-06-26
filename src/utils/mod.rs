@@ -8,8 +8,8 @@ pub mod identity;
 
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
-    EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrSignature, EIF_MAGIC,
-    MAX_NUM_SECTIONS,
+    pcr0_flag_fold_bytes, EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType,
+    PcrSignature, EIF_MAGIC, MAX_NUM_SECTIONS,
 };
 use crate::utils::cbor::from_slice;
 use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
@@ -566,6 +566,12 @@ impl<T: Digest + FixedOutputReset + Debug + Write + Clone> EifBuilder<T> {
             // hash the DER certificate (cert.digest()) and then tpm_extend_finalize_reset
             // will do the extend.
             self.certificate_hasher.write_all(&cert_der).unwrap();
+        }
+
+        // The fold goes into PCR0 (image_hasher) only, after every section,
+        // so it must come last. The certificate above feeds PCR8, not PCR0.
+        if let Some(fold) = pcr0_flag_fold_bytes(self.eif_hdr_flags) {
+            self.image_hasher.write_all(&fold).unwrap();
         }
     }
 }
