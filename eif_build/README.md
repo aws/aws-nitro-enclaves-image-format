@@ -43,6 +43,27 @@ OPTIONS:
         --arch <(x86_64|aarch64)>
             Sets image architecture [default: x86_64]
 
+        --pcie
+            Set the PCIE matched flag, which every other matched flag needs.
+
+        --pcie-vsock
+            Set the PCIE_VSOCK matched flag (needs --pcie).
+
+        --pcie-virtio
+            Set the PCIE_VIRTIO matched flag (needs --pcie).
+
+        --pcie-hotplug
+            Set the PCIE_HOTPLUG matched flag (needs --pcie).
+
+        --pcie-numa
+            Set the PCIE_NUMA matched flag (needs --pcie).
+
+        --cpu-overcommit
+            Set the CPU_OVERCOMMIT matched flag (needs --pcie and --pcie-virtio).
+
+        --cpu-accounting
+            Set the CPU_ACCOUNTING matched flag (needs --pcie).
+
         --build-time <build_time>
             Overrides image build time. [default: 2024-07-09T17:16:38.424202433+00:00]
 
