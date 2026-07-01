@@ -1,6 +1,7 @@
 use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature};
 use crate::utils::eif_reader::EifReader;
 use crate::utils::get_pcrs;
+use crate::utils::pkcs11::Pkcs11Key;
 use aws_config::BehaviorVersion;
 use aws_nitro_enclaves_cose::{
     crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap, CoseSign1,
@@ -25,6 +26,9 @@ pub enum SignKey {
 
     // KMS signer implementation from Cose library
     KmsKey(Arc<KmsKey>),
+
+    // PKCS#11 token (e.g. YubiKey PIV slot); the private op runs on the token.
+    Pkcs11Key(Pkcs11Key),
 }
 
 // Signing key details
@@ -35,10 +39,18 @@ enum SignKeyInfo {
 
     // KMS key details
     KmsKeyInfo { id: String, region: Option<String> },
+
+    // PKCS#11 URI (RFC 7512) selecting a key on a token
+    Pkcs11Info { uri: String },
 }
 
 impl SignKeyInfo {
     pub fn new(key_location: &str) -> Result<Self, String> {
+        if key_location.starts_with("pkcs11:") {
+            return Ok(SignKeyInfo::Pkcs11Info {
+                uri: key_location.to_string(),
+            });
+        }
         match parse_kms_arn(key_location) {
             Some((region, key_id)) => Ok(SignKeyInfo::KmsKeyInfo {
                 id: key_id,
@@ -127,6 +139,9 @@ impl SignKeyData {
                 let key = runtime.block_on(act)?;
                 SignKey::KmsKey(Arc::new(key))
             }
+            SignKeyInfo::Pkcs11Info { uri } => {
+                SignKey::Pkcs11Key(Pkcs11Key::new(uri, &cert)?)
+            }
         };
 
         Ok(SignKeyData { cert, key })
@@ -167,6 +182,8 @@ impl EifSigner {
                     .map_err(|e| format!("Task join error: {}", e))?
                 })?
             }
+            SignKey::Pkcs11Key(key) => CoseSign1::new::<Openssl>(payload, &HeaderMap::new(), key)
+                .map_err(|e| format!("Failed to create CoseSign1 with PKCS#11 key: {}", e))?,
         };
 
         let signature = cose_sign

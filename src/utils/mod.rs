@@ -4,6 +4,7 @@
 pub mod eif_reader;
 pub mod eif_signer;
 pub mod identity;
+pub mod pkcs11;
 
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
