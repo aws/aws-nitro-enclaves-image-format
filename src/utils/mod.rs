@@ -5,6 +5,8 @@ pub(crate) mod cbor;
 pub mod eif_reader;
 pub mod eif_signer;
 pub mod identity;
+#[cfg(feature = "pkcs11")]
+pub mod pkcs11;
 
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
@@ -958,6 +960,20 @@ mod tests {
             .expect("KMS key must be rejected without the kms feature");
 
         assert!(err.contains("`kms` feature"));
+        Ok(())
+    }
+
+    #[cfg(not(feature = "pkcs11"))]
+    #[test]
+    fn test_pkcs11_sign_key_data_without_pkcs11_feature() -> Result<(), std::io::Error> {
+        let cert_file_path = generate_certificate_file()?;
+        let key_uri = "pkcs11:id=%01?module-path=/usr/lib/libykcs11.so";
+
+        let err = SignKeyData::new(key_uri, &cert_file_path)
+            .err()
+            .expect("PKCS#11 key must be rejected without the pkcs11 feature");
+
+        assert!(err.contains("`pkcs11` feature"));
         Ok(())
     }
 

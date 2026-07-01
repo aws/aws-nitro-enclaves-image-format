@@ -26,6 +26,11 @@ jobs:
         cargo +${{ matrix.rust }} test --workspace --verbose \
             -- --skip utils::tests::kms # Requires AWS creds
     - run: cargo +${{ matrix.rust }} test --no-default-features --verbose
+    - run: sudo apt-get install -y softhsm2
+    - run: cargo +${{ matrix.rust }} test --no-default-features --features pkcs11 --verbose
+      env:
+        # The PKCS#11 token tests create their tokens in a temporary directory.
+        TEST_SOFTHSM2_MODULE: /usr/lib/softhsm/libsofthsm2.so
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -33,6 +38,7 @@ jobs:
     - run: rustup component add clippy
     - run: cargo clippy --workspace
     - run: cargo clippy --no-default-features
+    - run: cargo clippy --workspace --all-features
   rustfmt:
     runs-on: ubuntu-latest
     steps:

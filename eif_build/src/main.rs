@@ -175,7 +175,13 @@ fn main() {
         .arg(
             Arg::new("private-key")
                 .long("private-key")
-                .help("Path to a local key or KMS key ARN")
+                .help(if cfg!(feature = "pkcs11") {
+                    "Path to a local key, a KMS key ARN, or a PKCS#11 URI \
+                     (pkcs11:...; module via the URI's module-path or the \
+                     NITRO_CLI_PKCS11_MODULE env var)"
+                } else {
+                    "Path to a local key or KMS key ARN"
+                })
                 .requires("signing-certificate"),
         )
         .arg(
