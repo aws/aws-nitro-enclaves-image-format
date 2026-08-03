@@ -34,14 +34,14 @@ enum SignKeyInfo {
     LocalPrivateKeyInfo { path: std::path::PathBuf },
 
     // KMS key details
-    KmsKeyInfo { id: String, region: Option<String> },
+    KmsKeyInfo { arn: String, region: Option<String> },
 }
 
 impl SignKeyInfo {
     pub fn new(key_location: &str) -> Result<Self, String> {
         match parse_kms_arn(key_location) {
-            Some((region, key_id)) => Ok(SignKeyInfo::KmsKeyInfo {
-                id: key_id,
+            Some(region) => Ok(SignKeyInfo::KmsKeyInfo {
+                arn: key_location.to_string(),
                 region: Some(region),
             }),
             None => Ok(SignKeyInfo::LocalPrivateKeyInfo {
@@ -51,7 +51,7 @@ impl SignKeyInfo {
     }
 }
 
-fn parse_kms_arn(s: &str) -> Option<(String, String)> {
+fn parse_kms_arn(s: &str) -> Option<String> {
     // Matches KMS key ARNs in the format:
     // arn:partition:kms:region:account-id:key[/|:]key-id where:
     // - partition is: aws, aws-cn, or aws-us-gov
@@ -65,7 +65,7 @@ fn parse_kms_arn(s: &str) -> Option<(String, String)> {
 
     re.captures(s).map(|caps| {
         // Safe to use index access since we know the pattern has exactly 2 capture groups
-        (caps[1].to_string(), caps[2].to_string())
+        caps[1].to_string()
     })
 }
 
@@ -100,7 +100,7 @@ impl SignKeyData {
 
                 SignKey::LocalPrivateKey(key_data)
             }
-            SignKeyInfo::KmsKeyInfo { id, region } => {
+            SignKeyInfo::KmsKeyInfo { arn, region } => {
                 // Method `KmsKey::new_with_public_key` must be called from a thread being run
                 // by Tokio runtime, or from a thread with an active `EnterGuard`.
                 let act = async {
@@ -114,10 +114,10 @@ impl SignKeyData {
                         return Err("AWS region for KMS is not specified".to_string());
                     }
 
-                    let id_copy = id.clone();
+                    let arn_copy = arn.clone();
                     tokio::task::spawn_blocking(move || {
                         let client = Client::new(&sdk_config);
-                        KmsKey::new_with_public_key(client, id_copy, None)
+                        KmsKey::new_with_public_key(client, arn_copy, None)
                             .map_err(|e| e.to_string())
                     })
                     .await
@@ -395,30 +395,24 @@ mod arn_tests {
             (
                 "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab",
                 "us-east-1",
-                "1234abcd-12ab-34cd-56ef-1234567890ab",
             ),
             (
                 "arn:aws:kms:us-east-1:123456789012:key:1234abcd-12ab-34cd-56ef-1234567890ab",
                 "us-east-1",
-                "1234abcd-12ab-34cd-56ef-1234567890ab",
             ),
             (
                 "arn:aws-cn:kms:cn-north-1:123456789012:key/abcd1234",
                 "cn-north-1",
-                "abcd1234",
             ),
             (
                 "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key:5678efgh",
                 "us-gov-west-1",
-                "5678efgh",
             ),
         ];
 
-        for (arn, expected_region, expected_key_id) in test_cases {
-            let (captured_region, captured_key_id) =
-                parse_kms_arn(arn).expect("Should match valid ARN");
+        for (arn, expected_region) in test_cases {
+            let captured_region = parse_kms_arn(arn).expect("Should match valid ARN");
             assert_eq!(captured_region, expected_region);
-            assert_eq!(captured_key_id, expected_key_id);
         }
     }
 
@@ -472,24 +466,8 @@ mod arn_tests {
 
         for region in valid_regions {
             let arn = format!("arn:aws:kms:{}:123456789012:key/abcd1234", region);
-            let (captured_region, _) = parse_kms_arn(&arn).expect("Should match valid region");
+            let captured_region = parse_kms_arn(&arn).expect("Should match valid region");
             assert_eq!(captured_region, region);
-        }
-    }
-
-    #[test]
-    fn test_key_id_formats() {
-        let valid_key_ids = vec![
-            "1234abcd-12ab-34cd-56ef-1234567890ab", // UUID format
-            "abcd1234",                             // Short format
-            "12345678-1234-1234-1234-123456789012", // Another UUID format
-            "a1b2c3d4-e5f6",                        // Partial UUID format
-        ];
-
-        for key_id in valid_key_ids {
-            let arn = format!("arn:aws:kms:us-east-1:123456789012:key/{}", key_id);
-            let (_, captured_id) = parse_kms_arn(&arn).expect("Should match valid key ID");
-            assert_eq!(captured_id, key_id);
         }
     }
 }
