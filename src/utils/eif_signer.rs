@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::runtime::Runtime;
 
 // Signing key for eif images
@@ -51,19 +51,20 @@ impl SignKeyInfo {
     }
 }
 
-fn parse_kms_arn(s: &str) -> Option<String> {
-    // Matches KMS key ARNs in the format:
-    // arn:partition:kms:region:account-id:key[/|:]key-id where:
-    // - partition is: aws, aws-cn, or aws-us-gov
-    // - region is captured: letters, numbers, hyphens
-    // - account-id: exactly 12 digits
-    // - key-id is captured: letters, numbers, hyphens
-    let re = Regex::new(
-        r"^arn:(?:aws|aws-cn|aws-us-gov):kms:([a-z0-9-]+):\d{12}:key[:/]([a-zA-Z0-9-]+)$",
-    )
-    .expect("Regular expression for parsing ARNs must be valid");
+// Matches KMS key ARNs in the format:
+// arn:partition:kms:region:account-id:key[/|:]key-id where:
+// - partition is: aws prefixed string
+// - region is captured: letters, numbers, hyphens
+// - account-id: exactly 12 digits
+// - key-id: letters, numbers, hyphens
+// Compiled once on first use instead of on every `parse_kms_arn` call.
+static KMS_ARN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^arn:aws(?:[\-a-z]+)?:kms:([a-z0-9-]+):\d{12}:key[:/][a-zA-Z0-9-]+$")
+        .expect("Regular expression for parsing ARNs must be valid")
+});
 
-    re.captures(s).map(|caps| {
+fn parse_kms_arn(s: &str) -> Option<String> {
+    KMS_ARN_REGEX.captures(s).map(|caps| {
         // Safe to use index access since we know the pattern has exactly 2 capture groups
         caps[1].to_string()
     })
