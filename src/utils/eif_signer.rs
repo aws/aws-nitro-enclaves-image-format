@@ -2,10 +2,12 @@ use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSigna
 use crate::utils::eif_reader::EifReader;
 use crate::utils::get_pcrs;
 use aws_config::BehaviorVersion;
+use aws_nitro_enclaves_cose::error::CoseError;
 use aws_nitro_enclaves_cose::{
     crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap, CoseSign1,
 };
 use aws_sdk_kms::client::Client;
+use aws_sdk_kms::error::ProvideErrorMetadata;
 use aws_types::region::Region;
 use openssl::pkey::PKey;
 use regex::Regex;
@@ -118,8 +120,17 @@ impl SignKeyData {
                     let arn_copy = arn.clone();
                     tokio::task::spawn_blocking(move || {
                         let client = Client::new(&sdk_config);
-                        KmsKey::new_with_public_key(client, arn_copy, None)
-                            .map_err(|e| e.to_string())
+                        KmsKey::new_with_public_key(client, arn_copy, None).map_err(|e| {
+                            if let CoseError::AwsGetPublicKeyError(sdk) = &e {
+                                format!(
+                                    "KMS GetPublicKey failed: {}: {}",
+                                    sdk.code().unwrap_or("Unknown"),
+                                    sdk.message().unwrap_or("no message")
+                                )
+                            } else {
+                                e.to_string()
+                            }
+                        })
                     })
                     .await
                     .unwrap()
