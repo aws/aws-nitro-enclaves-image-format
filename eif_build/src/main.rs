@@ -23,6 +23,7 @@ use aws_nitro_enclaves_image_format::{
 use chrono::offset::Utc;
 use clap::{Arg, ArgAction, Command};
 use serde_json::json;
+use sha2::digest::FixedOutputReset;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Debug;
 use std::fs::OpenOptions;
@@ -262,7 +263,10 @@ fn main() {
     }
 }
 
-pub fn build_eif<T: Digest + Debug + Write + Clone>(params: EifBuildParameters, hasher: T) {
+pub fn build_eif<T: Digest + FixedOutputReset + Debug + Write + Clone>(
+    params: EifBuildParameters,
+    hasher: T,
+) {
     let mut output_file = OpenOptions::new()
         .read(true)
         .create(true)
