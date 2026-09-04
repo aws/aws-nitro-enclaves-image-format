@@ -4,10 +4,10 @@
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
     pcr0_flag_fold_bytes, EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo,
-    PcrSignature,
+    PcrSignature, EIF_HDR_FLAG_PCIE,
 };
 use crate::utils::cbor::{from_slice, to_vec};
-use crate::utils::get_pcrs;
+use crate::utils::{get_pcrs, Pcr6Hasher};
 use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::pkey::PKey;
@@ -78,6 +78,8 @@ pub struct EifReader {
     pub sign_check: Option<bool>,
     /// Generated and custom EIF metadata
     pub metadata: Option<EifIdentityInfo>,
+    /// PCR6 of the file as read; None without the PCIE flag
+    pcr6: Option<String>,
 }
 
 impl EifReader {
@@ -103,6 +105,20 @@ impl EifReader {
 
         let header = EifHeader::from_be_bytes(&header_buf)
             .map_err(|e| format!("Error while parsing EIF header: {:?}", e))?;
+
+        // PCR6 hashes the header and the bytes the loop below reads, up to
+        // the extent the header declares.  Only PCIE-flagged images have one.
+        // If the extent is invalid, or the sections read in order end before
+        // it, PCR6 cannot be measured and the file is rejected like any other
+        // malformed file.
+        let mut pcr6 = if header.flags & EIF_HDR_FLAG_PCIE == 0 {
+            None
+        } else {
+            Some(Pcr6Hasher::new(&header, Sha384::new())?)
+        };
+        if let Some(pcr6) = &mut pcr6 {
+            pcr6.update(&header_buf)?;
+        }
         curr_seek += EifHeader::size();
         eif_file
             .seek(SeekFrom::Start(curr_seek as u64))
@@ -130,6 +146,9 @@ impl EifReader {
             let section = EifSectionHeader::from_be_bytes(&section_buf)
                 .map_err(|e| format!("Error extracting EIF section header: {:?}", e))?;
             eif_crc.update(&section_buf);
+            if let Some(pcr6) = &mut pcr6 {
+                pcr6.update(&section_buf)?;
+            }
 
             let mut buf = vec![0u8; section.section_size as usize];
             curr_seek += EifSectionHeader::size();
@@ -140,6 +159,9 @@ impl EifReader {
                 .read_exact(&mut buf)
                 .map_err(|e| format!("Error while reading kernel from EIF: {:?}", e))?;
             eif_crc.update(&buf);
+            if let Some(pcr6) = &mut pcr6 {
+                pcr6.update(&buf)?;
+            }
 
             curr_seek += section.section_size as usize;
             eif_file
@@ -206,6 +228,9 @@ impl EifReader {
                 .map_err(|e| format!("Failed to fold header flags into image_hasher: {:?}", e))?;
         }
 
+        // Fails unless the loop read the whole declared extent.
+        let pcr6 = pcr6.map(Pcr6Hasher::finalize).transpose()?;
+
         Ok(EifReader {
             header,
             signature_section,
@@ -216,6 +241,7 @@ impl EifReader {
             eif_crc: eif_crc.finalize(),
             sign_check: None,
             metadata,
+            pcr6,
         })
     }
 
@@ -224,14 +250,18 @@ impl EifReader {
     }
 
     pub fn get_measurements(&mut self) -> Result<BTreeMap<String, String>, String> {
-        get_pcrs(
+        let mut measurements = get_pcrs(
             &mut self.image_hasher,
             &mut self.bootstrap_hasher,
             &mut self.app_hasher,
             &mut self.cert_hasher,
             Sha384::new(),
             self.signature_section.is_some(),
-        )
+        )?;
+        if let Some(pcr6) = &self.pcr6 {
+            measurements.insert("PCR6".to_string(), pcr6.clone());
+        }
+        Ok(measurements)
     }
 
     /// Returns deserialized header section

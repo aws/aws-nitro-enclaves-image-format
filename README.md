@@ -498,13 +498,15 @@ The section data contains JSON describing the build environment that produced th
 }
 ```
 
-The `EifSectionMetadata` section is not part of any measurement for an enclave and does not get validated by the hypervisor, beyond checking for its existence with file format version 4 and above.
+The `EifSectionMetadata` section is not part of `PCR0`, `PCR1`, `PCR2` or `PCR8`; only `PCR6`, which images with the `PCIE` flag have, covers it (see [`PCR6`](#pcr6)).
+It does not get validated by the Nitro Hypervisor, beyond checking for its existence with file format version 4 and above.
 
 ### EIF Measurements
 
 Nitro Enclaves includes attestation mechanisms to prove its identity and build trust with external services.
 As part of these measurements the enclave exposes a set of platform configuration registers (PCRs), each providing a set of hashes over some identifying data for the enclaves configuration and code.
-For the EIF files, there are four PCRs that describe it. They are `PCR0`, `PCR1`, `PCR2`, and `PCR8`:
+For the EIF files, there are four PCRs that describe it. They are `PCR0`, `PCR1`, `PCR2`, and `PCR8`.
+Images with the `PCIE` flag also have `PCR6` (see [`PCR6`](#pcr6)):
 
 ```
 PCR0                                  PCR1  PCR2  PCR8*
@@ -592,6 +594,18 @@ content_digest[PCR2] = sha384sum( data(EifSectionRamdisk[1..]) )
 
 *Note: The order of elements in that calculation depends on the order of sections in the EIF.
 Only the data for each section is part of the calculation, the headers are excluded.*
+
+#### `PCR6`
+
+`PCR6` is populated only if the `PCIE` flag is set in the EIF header.
+It is a measurement of the complete file: the header, every section header and every section, from offset 0 up to the extent, which is the larger of the header size and the furthest section end in the header's section table.
+A section ends at its `section_offsets` entry, which points at its section header, plus the section header size plus its `section_sizes` entry.
+Bytes after the extent are not measured, and the extent must be below 4 GiB.
+For `PCR6` this means `content_digest` is calculated as follows:
+
+```
+content_digest[PCR6] = sha384sum( file[0 .. extent] )
+```
 
 #### `PCR8`
 

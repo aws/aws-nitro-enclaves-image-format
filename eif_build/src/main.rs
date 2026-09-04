@@ -22,7 +22,7 @@ use aws_nitro_enclaves_image_format::defs::{
 use aws_nitro_enclaves_image_format::utils::identity::parse_custom_metadata;
 use aws_nitro_enclaves_image_format::{
     generate_build_info,
-    utils::{get_pcrs, EifBuilder, SignKeyData},
+    utils::{EifBuilder, SignKeyData},
 };
 use chrono::offset::Utc;
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -374,7 +374,7 @@ pub fn build_eif<T: Digest + FixedOutputReset + Debug + Write + Clone>(
         Path::new(params.kernel_path),
         params.cmdline.to_string(),
         params.sign_info,
-        hasher.clone(),
+        hasher,
         flags, // flags
         params.eif_info,
     );
@@ -382,19 +382,11 @@ pub fn build_eif<T: Digest + FixedOutputReset + Debug + Write + Clone>(
         build.add_ramdisk(Path::new(ramdisk));
     }
 
-    build.write_to(&mut output_file);
-    let signed = build.is_signed();
+    // For PCIE-flagged images, write_to's returned measurements include
+    // PCR6, the whole-file measurement over the header-derived extent of
+    // the finished output.
+    let measurements = build.write_to(&mut output_file);
     println!("Output file: {}", params.output_path);
-    build.measure();
-    let measurements = get_pcrs(
-        &mut build.image_hasher,
-        &mut build.bootstrap_hasher,
-        &mut build.customer_app_hasher,
-        &mut build.certificate_hasher,
-        hasher.clone(),
-        signed,
-    )
-    .expect("Failed to get boot measurements.");
 
     println!("{}", serde_json::to_string_pretty(&measurements).unwrap());
 }
