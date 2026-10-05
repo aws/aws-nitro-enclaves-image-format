@@ -1,6 +1,7 @@
 // Copyright 2019-2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 #![deny(warnings)]
+pub(crate) mod cbor;
 pub mod eif_reader;
 pub mod eif_signer;
 pub mod identity;
@@ -10,11 +11,11 @@ use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrSignature, EIF_MAGIC,
     MAX_NUM_SECTIONS,
 };
+use crate::utils::cbor::from_slice;
 use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::asn1::Asn1Time;
 use serde::{Deserialize, Serialize};
-use serde_cbor::from_slice;
 use sha2::digest::FixedOutputReset;
 use sha2::Digest;
 use std::cmp::Ordering;

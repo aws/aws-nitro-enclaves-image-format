@@ -5,12 +5,12 @@ use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
     EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
 };
+use crate::utils::cbor::{from_slice, to_vec};
 use crate::utils::get_pcrs;
 use aws_nitro_enclaves_cose::{crypto::Openssl, CoseSign1};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use openssl::pkey::PKey;
 use serde::{Deserialize, Serialize};
-use serde_cbor::{from_slice, to_vec};
 use sha2::{Digest, Sha384};
 
 use std::collections::BTreeMap;

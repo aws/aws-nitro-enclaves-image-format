@@ -1,4 +1,5 @@
 use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature};
+use crate::utils::cbor::to_vec;
 use crate::utils::eif_reader::EifReader;
 use crate::utils::get_pcrs;
 use aws_config::BehaviorVersion;
@@ -11,7 +12,6 @@ use aws_sdk_kms::error::ProvideErrorMetadata;
 use aws_types::region::Region;
 use openssl::pkey::PKey;
 use regex::Regex;
-use serde_cbor::to_vec;
 use sha2::{Digest, Sha384};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
