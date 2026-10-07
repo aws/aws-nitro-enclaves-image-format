@@ -23,7 +23,7 @@ aws-nitro-enclaves-cose = { version = "0.6", features = ["key_kms"] }
 openssl = "0.10"
 ciborium = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock"]}
-aws-sdk-kms = "1"
+aws-sdk-kms = { version = "1.63", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-config = "1"
 aws-types = "1"
 # Needed by `aws-nitro-enclaves-cose` to perform calls to KMS.
