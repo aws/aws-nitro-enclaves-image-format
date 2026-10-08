@@ -29,7 +29,7 @@ aws-types = "1"
 # Needed by `aws-nitro-enclaves-cose` to perform calls to KMS.
 tokio = { version = "1.20", features = ["rt-multi-thread"] }
 regex = "1.0"
-litemap = "=0.7.4"
+litemap = "=0.8.3"
 zerofrom = "=0.1.5"
 
 [dev-dependencies]
