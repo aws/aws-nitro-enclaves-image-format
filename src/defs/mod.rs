@@ -222,6 +222,17 @@ impl EifSectionHeader {
     }
 }
 
+/// A section located in an EIF file, as found through the `EifHeader`.
+#[derive(Clone, Copy, Debug)]
+pub struct EifSection {
+    /// Index of the section in the `EifHeader` section tables
+    pub index: usize,
+    /// The section header read from the file
+    pub header: EifSectionHeader,
+    /// File offset of the section data, right after the section header
+    pub data_offset: u64,
+}
+
 /// Array containing the signatures of at least one PCR.
 /// For now, it only contains the signature of PRC0.
 pub type EifSignature = Vec<PcrSignature>;

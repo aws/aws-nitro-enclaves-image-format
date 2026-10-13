@@ -37,4 +37,5 @@ tempfile = "3.5"
 members = [
     ".",  # aws-nitro-enclaves-image-format
     "eif_build",  # The eif_build CLI tool
+    "eif_extract",  # The eif_extract CLI tool
 ]

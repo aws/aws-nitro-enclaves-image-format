@@ -3,7 +3,8 @@
 
 use crate::defs::eif_hasher::EifHasher;
 use crate::defs::{
-    EifHeader, EifIdentityInfo, EifSectionHeader, EifSectionType, PcrInfo, PcrSignature,
+    EifHeader, EifIdentityInfo, EifSection, EifSectionHeader, EifSectionType, EifSignature,
+    PcrInfo, PcrSignature, EIF_MAGIC, MAX_NUM_SECTIONS,
 };
 use crate::utils::cbor::{from_slice, to_vec};
 use crate::utils::get_pcrs;
@@ -15,7 +16,7 @@ use sha2::{Digest, Sha384};
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
 
 /// The information about the signing certificate to be provided for a `describe-eif` request.
@@ -54,6 +55,125 @@ impl SignCertificateInfo {
             not_after,
             signature,
         }
+    }
+}
+
+/// Deserializes the data of an `EifSectionSignature` section
+pub fn parse_signature_section(data: &[u8]) -> Result<EifSignature, String> {
+    from_slice(data).map_err(|e| format!("Error deserializing signature section: {:?}", e))
+}
+
+/// Iterates over the sections of an EIF file, locating them through the
+/// section offsets in the `EifHeader`, like the Nitro hypervisor does.
+///
+/// Only section headers are read while iterating. Section data can be
+/// streamed with `copy_data` or loaded with `read_data`, so large ramdisks
+/// don't have to fit in memory.
+///
+/// The data length of a section is taken from its section header, which
+/// can differ from the matching `EifHeader::section_sizes` entry (e.g. on
+/// re-signed images, see issue #54). Callers can compare the two.
+pub struct Sections<R> {
+    reader: R,
+    header: EifHeader,
+    index: usize,
+}
+
+impl<R: Read + Seek> Sections<R> {
+    pub fn new(mut reader: R) -> Result<Self, String> {
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| format!("Failed to seek to EIF header: {:?}", e))?;
+        let mut header_buf = vec![0u8; EifHeader::size()];
+        reader
+            .read_exact(&mut header_buf)
+            .map_err(|e| format!("Error while reading EIF header: {:?}", e))?;
+        let header = EifHeader::from_be_bytes(&header_buf)
+            .map_err(|e| format!("Error while parsing EIF header: {:?}", e))?;
+
+        if header.magic != EIF_MAGIC {
+            return Err("Invalid EIF magic".to_string());
+        }
+        if header.num_sections as usize > MAX_NUM_SECTIONS {
+            return Err(format!(
+                "Invalid number of EIF sections: {}",
+                header.num_sections
+            ));
+        }
+
+        Ok(Sections {
+            reader,
+            header,
+            index: 0,
+        })
+    }
+
+    /// Returns the deserialized EIF header
+    pub fn eif_header(&self) -> &EifHeader {
+        &self.header
+    }
+
+    /// Copies the data of `section` to `writer`, returning the number of bytes copied
+    pub fn copy_data<W: Write>(
+        &mut self,
+        section: &EifSection,
+        writer: &mut W,
+    ) -> Result<u64, String> {
+        self.reader
+            .seek(SeekFrom::Start(section.data_offset))
+            .map_err(|e| format!("Failed to seek to EIF section data: {:?}", e))?;
+        let size = section.header.section_size;
+        let copied = io::copy(&mut (&mut self.reader).take(size), writer)
+            .map_err(|e| format!("Error while copying EIF section data: {:?}", e))?;
+        if copied != size {
+            return Err(format!(
+                "EIF section {} is truncated: expected {} bytes, found {}",
+                section.index, size, copied
+            ));
+        }
+        Ok(copied)
+    }
+
+    /// Reads the data of `section` into memory
+    pub fn read_data(&mut self, section: &EifSection) -> Result<Vec<u8>, String> {
+        let mut data = Vec::new();
+        self.copy_data(section, &mut data)?;
+        Ok(data)
+    }
+
+    fn read_section(&mut self, index: usize) -> Result<EifSection, String> {
+        let offset = self.header.section_offsets[index];
+        self.reader
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| format!("Failed to seek to EIF section {}: {:?}", index, e))?;
+        let mut section_buf = vec![0u8; EifSectionHeader::size()];
+        self.reader
+            .read_exact(&mut section_buf)
+            .map_err(|e| format!("Error while reading EIF section header {}: {:?}", index, e))?;
+        let header = EifSectionHeader::from_be_bytes(&section_buf)
+            .map_err(|e| format!("Error extracting EIF section header {}: {:?}", index, e))?;
+        if header.section_type == EifSectionType::EifSectionInvalid {
+            return Err(format!("Found invalid EIF section at index {}", index));
+        }
+
+        Ok(EifSection {
+            index,
+            header,
+            data_offset: offset + EifSectionHeader::size() as u64,
+        })
+    }
+}
+
+impl<R: Read + Seek> Iterator for Sections<R> {
+    type Item = Result<EifSection, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.header.num_sections as usize {
+            return None;
+        }
+        let index = self.index;
+        self.index += 1;
+        Some(self.read_section(index))
     }
 }
 
@@ -309,5 +429,122 @@ impl EifReader {
                 .replace(&vec!['[', ']'][..], "")
                 .replace(", ", ":"),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::defs::{EifBuildInfo, EifIdentityInfo};
+    use crate::utils::EifBuilder;
+    use std::io::Cursor;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn build_test_eif(dir: &Path) -> Vec<u8> {
+        let kernel = dir.join("kernel");
+        let ramdisk0 = dir.join("ramdisk0");
+        let ramdisk1 = dir.join("ramdisk1");
+        std::fs::write(&kernel, b"kernel data").unwrap();
+        std::fs::write(&ramdisk0, b"first ramdisk").unwrap();
+        std::fs::write(&ramdisk1, vec![0x5a; 100_000]).unwrap();
+
+        let eif_info = EifIdentityInfo {
+            img_name: "test".to_string(),
+            img_version: "1.0".to_string(),
+            build_info: EifBuildInfo {
+                build_time: "2026-01-01T00:00:00+00:00".to_string(),
+                build_tool: "test".to_string(),
+                build_tool_version: "0.0.0".to_string(),
+                img_os: "OS".to_string(),
+                img_kernel: "kernel".to_string(),
+            },
+            docker_info: serde_json::Value::Null,
+            custom_info: serde_json::Value::Null,
+        };
+        let mut builder = EifBuilder::new(
+            &kernel,
+            "console=ttyS0".to_string(),
+            None,
+            Sha384::new(),
+            0,
+            eif_info,
+        );
+        builder.add_ramdisk(&ramdisk0);
+        builder.add_ramdisk(&ramdisk1);
+
+        let eif_path = dir.join("test.eif");
+        let mut eif_file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&eif_path)
+            .unwrap();
+        builder.write_to(&mut eif_file);
+        std::fs::read(&eif_path).unwrap()
+    }
+
+    #[test]
+    fn test_sections_iterates_in_header_order() {
+        let dir = TempDir::new().unwrap();
+        let eif = build_test_eif(dir.path());
+
+        let mut sections = Sections::new(Cursor::new(eif)).unwrap();
+        let num_sections = sections.eif_header().num_sections as usize;
+        let mut found = Vec::new();
+        while let Some(section) = sections.next() {
+            let section = section.unwrap();
+            let data = sections.read_data(&section).unwrap();
+            found.push((section.header.section_type, data));
+        }
+
+        assert_eq!(found.len(), num_sections);
+        let types: Vec<_> = found.iter().map(|(t, _)| *t).collect();
+        assert_eq!(
+            types,
+            vec![
+                EifSectionType::EifSectionKernel,
+                EifSectionType::EifSectionCmdline,
+                EifSectionType::EifSectionMetadata,
+                EifSectionType::EifSectionRamdisk,
+                EifSectionType::EifSectionRamdisk,
+            ]
+        );
+        assert_eq!(found[0].1, b"kernel data");
+        assert_eq!(found[1].1, b"console=ttyS0");
+        assert_eq!(found[3].1, b"first ramdisk");
+        assert_eq!(found[4].1, vec![0x5a; 100_000]);
+    }
+
+    #[test]
+    fn test_sections_rejects_bad_magic() {
+        let dir = TempDir::new().unwrap();
+        let mut eif = build_test_eif(dir.path());
+        eif[0] = b'x';
+
+        assert!(Sections::new(Cursor::new(eif)).is_err());
+    }
+
+    #[test]
+    fn test_sections_rejects_too_many_sections() {
+        let dir = TempDir::new().unwrap();
+        let mut eif = build_test_eif(dir.path());
+        let mut header = EifHeader::from_be_bytes(&eif[..EifHeader::size()]).unwrap();
+        header.num_sections = MAX_NUM_SECTIONS as u16 + 1;
+        eif[..EifHeader::size()].copy_from_slice(&header.to_be_bytes());
+
+        assert!(Sections::new(Cursor::new(eif)).is_err());
+    }
+
+    #[test]
+    fn test_sections_reports_truncated_data() {
+        let dir = TempDir::new().unwrap();
+        let mut eif = build_test_eif(dir.path());
+        eif.truncate(eif.len() - 1);
+
+        let mut sections = Sections::new(Cursor::new(eif)).unwrap();
+        let last = sections.by_ref().last().unwrap().unwrap();
+        assert!(sections.read_data(&last).is_err());
     }
 }
