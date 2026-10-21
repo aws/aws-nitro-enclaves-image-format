@@ -204,7 +204,6 @@ impl EifSigner {
     }
 
     /// Generate the signature of the EIF.
-    /// eif_signature = [pcr0_signature]
     pub fn generate_eif_signature(
         &self,
         measurements: &BTreeMap<String, String>,
