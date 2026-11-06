@@ -22,12 +22,14 @@ jobs:
     - run: |
         cargo +${{ matrix.rust }} test --workspace --verbose \
             -- --skip utils::tests::kms # Requires AWS creds
+    - run: cargo +${{ matrix.rust }} test --no-default-features --verbose
   clippy:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - run: rustup component add clippy
     - run: cargo clippy --workspace
+    - run: cargo clippy --no-default-features
   rustfmt:
     runs-on: ubuntu-latest
     steps:

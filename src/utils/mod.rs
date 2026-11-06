@@ -687,7 +687,7 @@ impl PcrSignatureChecker {
 #[cfg(test)]
 mod tests {
     use crate::utils::eif_signer::{SignKey, SignKeyData};
-    use std::{env, io::Write, path::Path};
+    use std::{io::Write, path::Path};
     use tempfile::{NamedTempFile, TempPath};
 
     const TEST_CERT_CONTENT: &[u8] = "test cert content".as_bytes();
@@ -744,8 +744,24 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(feature = "kms"))]
+    #[test]
+    fn test_kms_sign_key_data_without_kms_feature() -> Result<(), std::io::Error> {
+        let cert_file_path = generate_certificate_file()?;
+        let key_arn = "arn:aws:kms:us-east-1:123456789012:key/test-key-id";
+
+        let err = SignKeyData::new(key_arn, &cert_file_path)
+            .err()
+            .expect("KMS key must be rejected without the kms feature");
+
+        assert!(err.contains("`kms` feature"));
+        Ok(())
+    }
+
+    #[cfg(feature = "kms")]
     mod kms {
         use super::*;
+        use std::env;
 
         #[test]
         fn test_kms_sign_key_data_from_invalid_cert_key_info() -> Result<(), std::io::Error> {
