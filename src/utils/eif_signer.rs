@@ -2,14 +2,7 @@ use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSigna
 use crate::utils::cbor::to_vec;
 use crate::utils::eif_reader::EifReader;
 use crate::utils::get_pcrs;
-use aws_config::BehaviorVersion;
-use aws_nitro_enclaves_cose::error::CoseError;
-use aws_nitro_enclaves_cose::{
-    crypto::kms::KmsKey, crypto::Openssl, header_map::HeaderMap, CoseSign1,
-};
-use aws_sdk_kms::client::Client;
-use aws_sdk_kms::error::ProvideErrorMetadata;
-use aws_types::region::Region;
+use aws_nitro_enclaves_cose::{crypto::Openssl, header_map::HeaderMap, CoseSign1};
 use openssl::pkey::PKey;
 use regex::Regex;
 use sha2::{Digest, Sha384};
@@ -17,8 +10,16 @@ use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
-use std::sync::{Arc, LazyLock};
-use tokio::runtime::Runtime;
+use std::sync::LazyLock;
+#[cfg(feature = "kms")]
+use {
+    aws_config::BehaviorVersion,
+    aws_nitro_enclaves_cose::{crypto::kms::KmsKey, error::CoseError},
+    aws_sdk_kms::{client::Client, error::ProvideErrorMetadata},
+    aws_types::region::Region,
+    std::sync::Arc,
+    tokio::runtime::Runtime,
+};
 
 // Signing key for eif images
 pub enum SignKey {
@@ -26,6 +27,7 @@ pub enum SignKey {
     LocalPrivateKey(Vec<u8>),
 
     // KMS signer implementation from Cose library
+    #[cfg(feature = "kms")]
     KmsKey(Arc<KmsKey>),
 }
 
@@ -33,19 +35,31 @@ pub enum SignKey {
 #[derive(Clone, Debug)]
 enum SignKeyInfo {
     // Local private key file path
-    LocalPrivateKeyInfo { path: std::path::PathBuf },
+    LocalPrivateKeyInfo {
+        path: std::path::PathBuf,
+    },
 
     // KMS key details
-    KmsKeyInfo { arn: String, region: Option<String> },
+    #[cfg(feature = "kms")]
+    KmsKeyInfo {
+        arn: String,
+        region: Option<String>,
+    },
 }
 
 impl SignKeyInfo {
     pub fn new(key_location: &str) -> Result<Self, String> {
         match parse_kms_arn(key_location) {
+            #[cfg(feature = "kms")]
             Some(region) => Ok(SignKeyInfo::KmsKeyInfo {
                 arn: key_location.to_string(),
                 region: Some(region),
             }),
+            #[cfg(not(feature = "kms"))]
+            Some(_) => Err(
+                "Signing with a KMS key requires the `kms` feature of aws-nitro-enclaves-image-format"
+                    .to_string(),
+            ),
             None => Ok(SignKeyInfo::LocalPrivateKeyInfo {
                 path: key_location.into(),
             }),
@@ -103,6 +117,7 @@ impl SignKeyData {
 
                 SignKey::LocalPrivateKey(key_data)
             }
+            #[cfg(feature = "kms")]
             SignKeyInfo::KmsKeyInfo { arn, region } => {
                 // Method `KmsKey::new_with_public_key` must be called from a thread being run
                 // by Tokio runtime, or from a thread with an active `EnterGuard`.
@@ -164,6 +179,7 @@ impl EifSigner {
                 CoseSign1::new::<Openssl>(payload, &HeaderMap::new(), &pkey)
                     .map_err(|e| format!("Failed to create CoseSign1 with local key: {}", e))?
             }
+            #[cfg(feature = "kms")]
             SignKey::KmsKey(key) => {
                 let arc_key = key.clone();
                 let runtime =
