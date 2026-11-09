@@ -283,6 +283,7 @@ impl EifSigner {
                 header.section_offsets[i] =
                     (header.section_offsets[i] as i64 + shift_amount) as u64;
             }
+            header.section_sizes[section_id] = new_signature_size;
         } else {
             // For new signatures, just append to the end
             header.section_offsets[section_id] = signature_offset;
@@ -393,6 +394,75 @@ impl EifSigner {
         eif_file
             .write_all(&eif_reader.eif_crc.to_be_bytes())
             .map_err(|err| format!("Failed to write checksum: {:?}", err))
+    }
+}
+
+#[cfg(test)]
+mod resign_tests {
+    use super::*;
+    use crate::defs::{EifBuildInfo, EifIdentityInfo};
+    use crate::utils::EifBuilder;
+    use tempfile::NamedTempFile;
+
+    fn unsigned_eif() -> NamedTempFile {
+        let mut kernel = NamedTempFile::new().unwrap();
+        kernel.as_file_mut().write_all(&[0x4bu8; 4096]).unwrap();
+        let mut ramdisk = NamedTempFile::new().unwrap();
+        ramdisk.as_file_mut().write_all(&[0x21u8; 2048]).unwrap();
+        let eif_info = EifIdentityInfo {
+            img_name: "resign-test".to_string(),
+            img_version: "1.0".to_string(),
+            build_info: EifBuildInfo {
+                build_time: "2026-11-09T00:00:00Z".to_string(),
+                build_tool: "resign-test".to_string(),
+                build_tool_version: "1.0".to_string(),
+                img_os: "Linux".to_string(),
+                img_kernel: "6.18".to_string(),
+            },
+            docker_info: serde_json::json!({}),
+            custom_info: serde_json::json!({}),
+        };
+        let mut builder = EifBuilder::new(
+            kernel.path(),
+            "console=ttyS0".to_string(),
+            None,
+            Sha384::new(),
+            0,
+            eif_info,
+        );
+        builder.add_ramdisk(ramdisk.path());
+        let out = NamedTempFile::new().unwrap();
+        builder.write_to(&mut out.reopen().unwrap());
+        out
+    }
+
+    #[test]
+    fn resign_updates_signature_size_in_header() {
+        let eif = unsigned_eif();
+        let path = eif.path().to_str().unwrap();
+        // write_signature never reads the key, so an empty one is enough.
+        let signer = EifSigner::new(Some(SignKeyData {
+            cert: Vec::new(),
+            key: SignKey::LocalPrivateKey(Vec::new()),
+        }))
+        .unwrap();
+
+        signer
+            .write_signature(path, vec![0xaa; 100], false)
+            .unwrap();
+        for size in [40usize, 300] {
+            signer
+                .write_signature(path, vec![0xbb; size], true)
+                .unwrap();
+
+            let mut file = File::open(path).unwrap();
+            let header = signer.read_and_parse_header(&mut file).unwrap();
+            let (offset, id, on_disk) = signer.find_existing_signature(&mut file, &header).unwrap();
+            assert_eq!(on_disk, size as u64);
+            assert_eq!(header.section_sizes[id], size as u64);
+            let end = offset + EifSectionHeader::size() as u64 + size as u64;
+            assert_eq!(file.metadata().unwrap().len(), end);
+        }
     }
 }
 
