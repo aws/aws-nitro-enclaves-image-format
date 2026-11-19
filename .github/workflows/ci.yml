@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # A push to main can get a newer toolchain than its pull request run had.
+  # Pushes to main only warn about lints; pull requests keep denying them.
+  RUSTFLAGS: ${{ github.event_name == 'push' && '--cap-lints=warn' || '' }}
 
 jobs:
   build:
