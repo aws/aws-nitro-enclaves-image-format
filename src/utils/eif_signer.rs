@@ -332,8 +332,12 @@ impl EifSigner {
         eif_file: &mut File,
         header: &EifHeader,
     ) -> Result<(u64, usize, u64), String> {
-        for i in 0..header.num_sections as usize {
-            let offset = header.section_offsets[i];
+        for (i, &offset) in header
+            .section_offsets
+            .iter()
+            .enumerate()
+            .take(header.num_sections as usize)
+        {
             let mut section_header_buf = vec![0u8; EifSectionHeader::size()];
 
             eif_file
