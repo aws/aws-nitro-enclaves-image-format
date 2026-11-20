@@ -101,7 +101,8 @@ OPTIONS:
             Specify output file path
 
         --private-key <private-key>
-            Specify KMS key ARN, or the path to the local private key file
+            Specify KMS key ARN, the path to the local private key file, or a PKCS#11 URI
+            (see "Signing with a PKCS#11 token")
 
         --ramdisk <FILE>
             Sets path to a ramdisk file representing a cpio.gz archive
@@ -115,3 +116,32 @@ OPTIONS:
         --algo <(sha256|sha384|sha512)>
             Sets algorithm to measure the image [default: sha384]
 ```
+
+## Signing with a PKCS#11 token
+
+The signing key can live on a PKCS#11 token, such as a YubiKey or an HSM, instead of in a
+file. This needs the `pkcs11` feature, which is off by default:
+
+```sh
+$ cargo build --all --release --features pkcs11
+```
+
+Pass an [RFC 7512](https://www.rfc-editor.org/rfc/rfc7512) `pkcs11:` URI as the private key:
+
+```sh
+$ eif_build ... \
+    --signing-certificate cert.pem \
+    --private-key 'pkcs11:serial=12345678;id=%03?module-path=/usr/lib/x86_64-linux-gnu/libykcs11.so'
+```
+
+The URI must select one token and one private key on it:
+
+| Attribute | Selects |
+| --- | --- |
+| `token`, `manufacturer`, `serial`, `model`, `slot-id` | The token. If more than one token is present, these must narrow it down to one. |
+| `id`, `object` | The private key, by its `CKA_ID` and `CKA_LABEL`. |
+| `module-path` (query) | The PKCS#11 module to load. Falls back to the `NITRO_CLI_PKCS11_MODULE` environment variable. |
+| `pin-value` (query) | The user PIN. Falls back to the `NITRO_CLI_PKCS11_PIN` environment variable. |
+
+Other attributes are rejected. The key must be an EC key and must be the key of the signing
+certificate, which is checked before anything is signed.

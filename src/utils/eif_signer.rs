@@ -2,6 +2,8 @@ use crate::defs::{EifHeader, EifSectionHeader, EifSectionType, PcrInfo, PcrSigna
 use crate::utils::cbor::to_vec;
 use crate::utils::eif_reader::EifReader;
 use crate::utils::get_pcrs;
+#[cfg(feature = "pkcs11")]
+use crate::utils::pkcs11::Pkcs11Key;
 use aws_nitro_enclaves_cose::{crypto::Openssl, header_map::HeaderMap, CoseSign1};
 use openssl::pkey::PKey;
 use regex::Regex;
@@ -29,6 +31,10 @@ pub enum SignKey {
     // KMS signer implementation from Cose library
     #[cfg(feature = "kms")]
     KmsKey(Arc<KmsKey>),
+
+    // PKCS#11 token (e.g. YubiKey PIV slot); the private op runs on the token.
+    #[cfg(feature = "pkcs11")]
+    Pkcs11Key(Pkcs11Key),
 }
 
 // Signing key details
@@ -45,10 +51,27 @@ enum SignKeyInfo {
         arn: String,
         region: Option<String>,
     },
+
+    // PKCS#11 URI (RFC 7512) selecting a key on a token
+    #[cfg(feature = "pkcs11")]
+    Pkcs11Uri {
+        uri: String,
+    },
 }
 
 impl SignKeyInfo {
     pub fn new(key_location: &str) -> Result<Self, String> {
+        if key_location.starts_with("pkcs11:") {
+            #[cfg(feature = "pkcs11")]
+            return Ok(SignKeyInfo::Pkcs11Uri {
+                uri: key_location.to_string(),
+            });
+            #[cfg(not(feature = "pkcs11"))]
+            return Err(
+                "Signing with a PKCS#11 key requires the `pkcs11` feature of aws-nitro-enclaves-image-format"
+                    .to_string(),
+            );
+        }
         match parse_kms_arn(key_location) {
             #[cfg(feature = "kms")]
             Some(region) => Ok(SignKeyInfo::KmsKeyInfo {
@@ -154,6 +177,8 @@ impl SignKeyData {
                 let key = runtime.block_on(act)?;
                 SignKey::KmsKey(Arc::new(key))
             }
+            #[cfg(feature = "pkcs11")]
+            SignKeyInfo::Pkcs11Uri { uri } => SignKey::Pkcs11Key(Pkcs11Key::new(uri, &cert)?),
         };
 
         Ok(SignKeyData { cert, key })
@@ -194,6 +219,11 @@ impl EifSigner {
                     .await
                     .map_err(|e| format!("Task join error: {}", e))?
                 })?
+            }
+            #[cfg(feature = "pkcs11")]
+            SignKey::Pkcs11Key(key) => {
+                CoseSign1::new::<Openssl>(payload, &HeaderMap::new(), key)
+                    .map_err(|e| format!("Failed to create CoseSign1 with PKCS#11 key: {}", e))?
             }
         };
 
